@@ -9,7 +9,7 @@ class ShortestPath():
     """
 
     def __init__(self, file_path, pop_size, repro, crossover, mutation,
-            num_generations, num_runs):
+            num_generations, debug=False):
         """
         Initializes the optimization object with all the needed values to run
         the optimization.
@@ -59,14 +59,15 @@ class ShortestPath():
         # Number of generations
         self.num_generations = num_generations
 
-        # Number of runs of the algorithm
-        self.num_runs = num_runs
-
         # Best result overall
         self.best_result = {'solution': [], 'path_cost': np.inf}
 
-        # Best result per generation per run
-        self.best_result_per_gen = {'solution': [], 'path_cost': np.inf}
+        # Switch for saving data if we need it for debugging/visualization
+        self.debug = debug
+
+        # All of the populations of the optimization, used for
+        # debugging/visualization
+        self.pop_history = np.ndarray((0, self.num_genes))
 
         # Path cost of generation
         self.path_cost = None
@@ -240,56 +241,61 @@ class ShortestPath():
 
     def optimize(self):
         """
-        Runs the optimizational algorithm num_runs times, trying to find the
-        shortest path.
+        Runs the optimizational algorithm trying to find the shortest path.
         """
 
         # Numbers representing the nodes
         nodes = np.arange(self.num_genes)
 
-        # Number of runts to start the optimization from scratch
-        for run in range(self.num_runs):
+        # Generate the initial population
+        self.population = np.ndarray((0, self.num_genes)).astype(int)
+        for i in range(self.pop_size):
+            self.population = np.vstack((
+                self.population,
+                np.random.permutation(nodes).reshape(1, self.num_genes),
+                ))
 
-            # Generate the initial population
-            self.population = np.ndarray((0, self.num_genes)).astype(int)
-            for i in range(self.pop_size):
-                self.population = np.vstack((
-                    self.population,
-                    np.random.permutation(nodes).reshape(1, self.num_genes),
-                    ))
+        # Number of iterations of one run
+        for generation in range(self.num_generations):
 
-            # Number of iterations of one run
-            for generation in range(self.num_generations):
+            # Evaluate the current generation
+            self.evaluate_generation()
 
-                # Evaluate the current generation
-                self.evaluate_generation()
+            ## DEBUG
+            print(generation, self.path_cost.mean())
+            ## DEBUG
 
-                # Get the best individual and his path cost
-                if self.best_result['path_cost'] > self.path_cost.min():
-                    self.best_result['solution'] = self.population[
-                            self.path_cost.argmin()
-                            ]
-                    self.best_result['path_cost'] = self.path_cost.min()
+            # If we are debuggin/visualizing, remember the run
+            if self.debug:
+                self.pop_history = np.vstack((self.pop_history, self.population))
 
-                # Calculate cumulative sum for roulette game (used for
-                # reproduction and crossing)
-                self.cumulative = self.fitness.cumsum()
+            # Get the best individual and his path cost
+            if self.best_result['path_cost'] > self.path_cost.min():
+                self.best_result['solution'] = self.population[
+                        self.path_cost.argmin()
+                        ]
+                self.best_result['path_cost'] = self.path_cost.min()
 
-                # Generate a placeholder for the new population, and remember
-                # the old population
-                self.old_population = self.population[:]
-                self.population = np.zeros(
-                        (
-                            self.pop_size,
-                            self.num_genes
-                            )
-                        ).astype(int)
+            # Calculate cumulative sum for roulette game (used for
+            # reproduction and crossing)
+            self.cumulative = self.fitness.cumsum()
 
-                # Perform reproduction
-                self.reproduction()
+            # Generate a placeholder for the new population, and remember
+            # the old population
+            self.old_population = self.population[:]
+            self.population = np.zeros(
+                    (
+                        self.pop_size,
+                        self.num_genes
+                        )
+                    ).astype(int)
 
-                # Perform crossing
-                self.crossing()
 
-                # Perform mutation
-                self.mutation()
+            # Perform reproduction
+            self.reproduction()
+
+            # Perform crossing
+            self.crossing()
+
+            # Perform mutation
+            self.mutation()
