@@ -18,5 +18,8 @@ opt = CNCOptimizer(path_file, recipe_grouping=False)
 # Run the optimization
 opt.optimize()
 
+# Write the optimization to a file
+opt.save()
+
 # Generate visualization files
 opt.visualize()
