@@ -1,6 +1,14 @@
+# Reloading: remove for production
+import importlib
+
 import csv
 import numpy as np
 from multiprocessing import Process, Manager
+
+# Reloading: remove for production
+import cnc.visualization as visualization
+importlib.reload(visualization)
+
 from cnc.visualization import Visualizer
 
 
@@ -11,7 +19,7 @@ class CNCOptimizer():
     then runs the optimizers in parallel and saves the result.
     """
 
-    def __init__(self, file_path, recipe_grouping=False):
+    def __init__(self, file_path, recipe_grouping=True):
         """
         Initializes the object.
         """
@@ -40,24 +48,40 @@ class CNCOptimizer():
         N represents the total number of nodes (total number of lines in file).
         """
 
-        # Dictionary which groups nodes based on line type, or line type/recipe
-        # type
+        # Dictionary which will contain nodes, grouped in a specific order
         self.nodes = {}
 
         with open(self.file_path, 'r') as path_file:
             reader = csv.reader(path_file, delimiter=' ')
             for row in reader:
 
-                # Determine the group name
-                if self.recipe_grouping:
-                    group_name = row[0] + row[5]
+                # The name of the line
+                line_type = row[0]
+
+                # The number of the recipe
+                recipe = row[5]
+
+                # Determine the name of the group
+                # We make groups of nodes in the following manner, if we're
+                # using grouping
+                #  1) REF
+                #  2) SCRIBE_LINE --> Except for Recipe #2
+                #  3) BUSBAR_LINE --> All Recipes
+                #  4) EDGEDEL_LINE --> All Recipes
+                #  5) SCRIBE_LINE --> Only Recipe #2
+                # If we're not using grouping, we split the line types by
+                # group, but keep the line order intact, and SCRIBE_LINE recipe
+                # number 2 at the end
+                if line_type == 'SCRIBE_LINE' and recipe == '2':
+                    group_name = 'SCRIBE_LINE2'
+                elif line_type == 'REF':
+                    group_name = 'REF'
+                elif self.recipe_grouping:
+                    group_name = line_type
                 else:
-                    group_name = row[0]
+                    group_name = line_type + recipe
 
-                # Add group to dictionary, if it isn't in there
-                if group_name not in self.nodes:
-                    self.nodes[group_name] = np.ndarray((0, 2, 2))
-
+                # The node itself
                 # The coordinates in the file are Y1, X1, Y2, X2, and we
                 # want to store them as X1, Y1, X2, Y2
                 # We skip the 1st entry since it contains the type of line
@@ -68,10 +92,16 @@ class CNCOptimizer():
                     float(row[3].replace(',', '')),
                     ]).reshape((1, 2, 2))
 
-                # Add the node to the existing nodes
-                self.nodes[group_name] = np.vstack(
-                        (self.nodes[group_name], node)
-                        )
+                # Add line to dictionary, if it isn't in there
+                if group_name not in self.nodes:
+                    self.nodes[group_name] = node
+
+                else:
+                    # Add the node to the existing nodes
+                    self.nodes[group_name] = np.vstack((
+                        self.nodes[group_name],
+                        node
+                        ))
 
 
     def optimize(self):
@@ -80,7 +110,7 @@ class CNCOptimizer():
         """
 
         # Size of population per generation
-        pop_size = 10
+        pop_size = 300
 
         # Probability of reproduction
         repro = 0.8
@@ -92,10 +122,7 @@ class CNCOptimizer():
         mutation = 0.001
 
         # Number of generations to evolve
-        num_generations = 10
-
-        # Whether to remember best population, for debugging/visualization
-        debug = False
+        num_generations = 1000
 
         # List containing all optimization processes
         processes = []
@@ -112,117 +139,101 @@ class CNCOptimizer():
             # If there's not more that one line of this line type, don't
             # optimize it, because we will use it in the "final" optimization
             # run, when we optimize the optimizations together
-            if group.shape[0] > 1:
-                p = Process(target=self.start_process, args=(
-                    self.all_optimizations,
-                    group_name,
-                    group,
-                    pop_size,
-                    repro,
-                    crossover,
-                    mutation,
-                    num_generations,
-                    debug
-                    ))
-                processes.append(p)
-                p.start()
+            p = Process(target=self.start_process, args=(
+                self.all_optimizations,
+                group_name,
+                group,
+                pop_size,
+                repro,
+                crossover,
+                mutation,
+                num_generations
+                ))
+            processes.append(p)
+            p.start()
 
         # Wait for processes to finish before executing other code
         for process in processes:
             process.join()
 
-        # Run the last optimization, which optimizes the best paths of all
-        # subgroups
-        # These "group nodes" will be the starting point of the first line of
-        # the best path, and the ending point of the last line of the best
-        # path, so that we practically treat the whole "best path" of an
-        # optimization as one line, and then we optimize all the "best paths"
-        # of all groups together, as a set of line, since it does not matter
-        # how the tool end up where it is (we expect that it did the least
-        # ammount of travelling possible)
+        # Save the results in a list of tuples, containing the group name and
+        # the node, but starting with REF
+        # We have to respect the following order:
+        # 1) REF
+        # 2) SCRIBE_LINE (non 2 recipe)
+        # 3) BUSBAR_LINE
+        # 4) EDGEDEL_LINE
+        # 5) SCRIBE_LINE2
 
-        # This is the empty group nodes array
-        #  self.group_nodes = np.ndarray((0, 2, 2))
+        self.result = [('REF', self.nodes['REF'][0])]
 
-        #  # This is a group-to-node mapping dictionary, which we need to later
-        #  # sort the groups correctly, since the optimization algorithm will give
-        #  # us the correct order of the nodes
-        #  group_to_node = {}
-        #  i = 0
+        # Find all SCRIBE_LINE (non 2 recipe) groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'SCRIBE_LINE' in group_name and '2' not in group_name:
+                for node_number in opt.best_result['solution']:
+                    self.result.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-        #  # Go through all the results, and extract the start and finish of the
-        #  # optimization path
-        #  for opt_name, opt in self.all_optimizations.items():
+        # Find all BUSBAR_LINE groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'BUSBAR_LINE' in group_name:
+                for node_number in opt.best_result['solution']:
+                    self.result.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-            #  # Get the best path
-            #  solution = opt.best_result['solution']
+        # Find all EDGEDEL_LINE groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'EDGEDEL_LINE' in group_name:
+                for node_number in opt.best_result['solution']:
+                    self.result.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-            #  # Extract the beginning and the end of the best path and treat it
-            #  # as one node (one line)
-            #  # We use the starting position of the first node in the solution
-            #  # path, and the end position of the last node in the solution path
-            #  node = np.array([
-                #  opt.nodes[solution[0]][0],
-                #  opt.nodes[solution[-1]][1]
-                #  ]).reshape((1, 2, 2))
+        # Find all SCRIBE_LINE2 groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'SCRIBE_LINE2' == group_name:
+                for node_number in opt.best_result['solution']:
+                    self.result.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-            #  # Now add it to the list of nodes
-            #  self.group_nodes = np.vstack((self.group_nodes, node))
-            #  group_to_node[opt_name] = i
-            #  i += 1
+        ### Do the same thing for the initial result (used only for
+        # visualization)
+        self.initial = [('REF', self.nodes['REF'][0])]
 
-        #  # Now, add all the lines types/recipe groupings of which there are only
-        #  # one (which could not be optimized)
-        #  for group_name, group in self.nodes.items():
-            #  if group.shape[0] == 1:
-                #  self.group_nodes = np.vstack((
-                    #  self.group_nodes,
-                    #  group
-                    #  ))
-                #  group_to_node[group_name] = i
-                #  print(group_name)
-                #  i += 1
-                #  print(group_to_node)
+        # Find all SCRIBE_LINE (non 2 recipe) groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'SCRIBE_LINE' in group_name and '2' not in group_name:
+                for node_number in opt.initial_result['solution']:
+                    self.initial.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-        #  self.opt = GeneticAlgorithm(self.group_nodes, pop_size, repro, crossover,
-                    #  mutation, num_generations, debug)
+        # Find all BUSBAR_LINE groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'BUSBAR_LINE' in group_name:
+                for node_number in opt.initial_result['solution']:
+                    self.initial.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-        #  # Start the optimization
-        #  self.opt.optimize()
+        # Find all EDGEDEL_LINE groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'EDGEDEL_LINE' in group_name:
+                for node_number in opt.initial_result['solution']:
+                    self.initial.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
-        #  # Write the output
-        #  # Order the groups, based on the optimization
-        #  group_order = [
-                #  self.nodes.keys()[index] for index in
-                #  self.opt.best_result['solution']
-                #  ]
-        #  print(group_order)
-
-        #  # Write solution to file
-        #  with open('optimized.code', mode='w') as csv_file:
-            #  writer = csv.writer(csv_file, delimiter=',')
-            #  for group in group_order:
-                #  # Coordinates are saved as X1, Y1, X2, Y2, but we need to save
-                #  # them as Y1, X1, Y2, X2
-                #  if type(self.all_optimizations[group]) is np.ndarray:
-                    #  row = []
-                    #  row.append(group)
-                    #  row.append(self.all_optimizations[group][0][0, 1])
-                    #  row.append(self.all_optimizations[group][0][0, 0])
-                    #  row.append(self.all_optimizations[group][0][1, 1])
-                    #  row.append(self.all_optimizations[group][0][1, 0])
-                    #  writer.writerow(row)
-                #  else:
-                    #  path = self.all_optimizations[group].best_result['solution']
-                    #  nodes = self.all_optimizations[group].nodes
-                    #  for node in path:
-                        #  row = []
-                        #  row.append(group)
-                        #  row.append(nodes[node][0, 1])
-                        #  row.append(nodes[node][0, 0])
-                        #  row.append(nodes[node][1, 1])
-                        #  row.append(nodes[node][1, 0])
-                        #  writer.writerow(row)
+        # Find all SCRIBE_LINE2 groups
+        for group_name, opt in self.all_optimizations.items():
+            if 'SCRIBE_LINE2' == group_name:
+                for node_number in opt.initial_result['solution']:
+                    self.initial.append((
+                        group_name,
+                        self.nodes[group_name][node_number]))
 
 
     def save(self, file_name):
@@ -233,7 +244,7 @@ class CNCOptimizer():
 
 
     def start_process(self, all_optimizations, node_name, node, pop_size,
-            repro, crossover, mutation, num_generations, debug):
+            repro, crossover, mutation, num_generations):
         """
         Method that creates initializes the optimization object, starts the
         optimization and saves the result.
@@ -241,7 +252,7 @@ class CNCOptimizer():
 
         # Initialize the optimization object
         opt = GeneticAlgorithm(node, pop_size, repro, crossover, mutation,
-                num_generations, debug)
+                num_generations)
 
         # Start the optimization
         opt.optimize()
@@ -254,9 +265,9 @@ class CNCOptimizer():
         """
         Visualizes the result of the optimization.
         """
-        return
-        viz = Visualizer(opt)
-        #  viz.visualize_solution()
+
+        viz = Visualizer(self.result, self.initial)
+        viz.visualize_solution()
 
 
 class GeneticAlgorithm():
@@ -266,7 +277,7 @@ class GeneticAlgorithm():
     """
 
     def __init__(self, nodes, pop_size, repro, crossover, mutation,
-            num_generations, debug=False):
+            num_generations):
         """
         Initializes the optimization object with all the needed values to run
         the optimization.
@@ -316,12 +327,8 @@ class GeneticAlgorithm():
         # Best result overall
         self.best_result = {'solution': [], 'path_cost': np.inf}
 
-        # Switch for saving data if we need it for debugging/visualization
-        self.debug = debug
-
-        # All of the populations of the optimization, used for
-        # debugging/visualization
-        self.pop_history = np.ndarray((0, self.num_genes))
+        # Initial result
+        self.initial_result = {'solution': [], 'path_cost': np.inf}
 
         # Path cost of generation
         self.path_cost = None
@@ -488,13 +495,9 @@ class GeneticAlgorithm():
             # Evaluate the current generation
             self.evaluate_generation()
 
-            ## DEBUG
+            ### DEBUG
             #  print(generation, self.path_cost.mean())
-            ## DEBUG
-
-            # If we are debuggin/visualizing, remember the run
-            if self.debug:
-                self.pop_history = np.vstack((self.pop_history, self.population))
+            ### DEBUG
 
             # Get the best individual and his path cost
             if self.best_result['path_cost'] > self.path_cost.min():
@@ -502,6 +505,11 @@ class GeneticAlgorithm():
                         self.path_cost.argmin()
                         ]
                 self.best_result['path_cost'] = self.path_cost.min()
+
+                # If this is the 1st iteration, save the result for comparison
+                if generation < 1:
+                    self.initial_result['solution'] = self.best_result['solution']
+                    self.initial_result['path_cost'] = self.best_result['path_cost']
 
             # Calculate cumulative sum for roulette game (used for
             # reproduction and crossing)

@@ -4,9 +4,6 @@ import importlib
 import cnc.optimization as optimization
 importlib.reload(optimization)
 
-import cnc.visualization as visualization
-importlib.reload(visualization)
-
 from cnc.optimization import CNCOptimizer
 
 # Path to input file
@@ -19,7 +16,7 @@ opt = CNCOptimizer(path_file, recipe_grouping=False)
 opt.optimize()
 
 # Write the optimization to a file
-opt.save()
+#  opt.save()
 
 # Generate visualization files
 opt.visualize()
