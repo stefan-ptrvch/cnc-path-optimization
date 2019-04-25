@@ -111,7 +111,7 @@ class CNCOptimizer():
         """
 
         # Size of population per generation
-        pop_size = 100
+        pop_size = 300
 
         # Probability of reproduction
         repro = 0.8
@@ -123,7 +123,7 @@ class CNCOptimizer():
         mutation = 0.001
 
         # Number of generations to evolve
-        num_generations = 500
+        num_generations = 1000
 
         # List containing all optimization processes
         processes = []
@@ -523,8 +523,8 @@ class GeneticAlgorithm():
 
                 # If this is the 1st iteration, save the result for comparison
                 if generation < 1:
-                    self.initial_result['solution'] = self.best_result['solution']
-                    self.initial_result['path_cost'] = self.best_result['path_cost']
+                    self.initial_result['solution'] = self.population[0]
+                    self.initial_result['path_cost'] = self.path_cost[0]
 
             # Calculate cumulative sum for roulette game (used for
             # reproduction and crossing)
