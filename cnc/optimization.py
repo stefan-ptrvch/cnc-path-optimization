@@ -3,7 +3,8 @@ import importlib
 
 import csv
 import numpy as np
-from multiprocessing import Process, Manager
+from tqdm import tqdm
+from multiprocessing import Process, Manager, current_process
 
 # Reloading: remove for production
 import cnc.visualization as visualization
@@ -110,7 +111,7 @@ class CNCOptimizer():
         """
 
         # Size of population per generation
-        pop_size = 300
+        pop_size = 100
 
         # Probability of reproduction
         repro = 0.8
@@ -122,7 +123,7 @@ class CNCOptimizer():
         mutation = 0.001
 
         # Number of generations to evolve
-        num_generations = 1000
+        num_generations = 500
 
         # List containing all optimization processes
         processes = []
@@ -134,6 +135,7 @@ class CNCOptimizer():
 
         # For every line type, and recipe number (if we use recipe grouping),
         # start an optimization
+        progress_bar_position = 0
         for group_name, group in self.nodes.items():
 
             # If there's not more that one line of this line type, don't
@@ -147,10 +149,13 @@ class CNCOptimizer():
                 repro,
                 crossover,
                 mutation,
-                num_generations
+                num_generations,
+                progress_bar_position
                 ))
+            p.name = group_name
             processes.append(p)
             p.start()
+            progress_bar_position += 1
 
         # Wait for processes to finish before executing other code
         for process in processes:
@@ -244,7 +249,7 @@ class CNCOptimizer():
 
 
     def start_process(self, all_optimizations, node_name, node, pop_size,
-            repro, crossover, mutation, num_generations):
+            repro, crossover, mutation, num_generations, progress_bar_position):
         """
         Method that creates initializes the optimization object, starts the
         optimization and saves the result.
@@ -252,7 +257,7 @@ class CNCOptimizer():
 
         # Initialize the optimization object
         opt = GeneticAlgorithm(node, pop_size, repro, crossover, mutation,
-                num_generations)
+                num_generations, progress_bar_position)
 
         # Start the optimization
         opt.optimize()
@@ -277,7 +282,7 @@ class GeneticAlgorithm():
     """
 
     def __init__(self, nodes, pop_size, repro, crossover, mutation,
-            num_generations):
+            num_generations, progress_bar_position=0):
         """
         Initializes the optimization object with all the needed values to run
         the optimization.
@@ -336,6 +341,9 @@ class GeneticAlgorithm():
         # Fitness of generation, which is inverse normalized path cost (for
         # optimizational puproses)
         self.fitness = None
+
+        # Progress bar position for tqdm
+        self.progress_bar_position = progress_bar_position
 
 
     def generate_distance_matrix(self):
@@ -489,8 +497,15 @@ class GeneticAlgorithm():
                 np.random.permutation(nodes).reshape(1, self.num_genes),
                 ))
 
+        # Get the name of the process
+        process_name = current_process().name
+
         # Number of iterations of one run
-        for generation in range(self.num_generations):
+        for generation in tqdm(
+                range(self.num_generations),
+                position=self.progress_bar_position,
+                desc=process_name
+                ):
 
             # Evaluate the current generation
             self.evaluate_generation()
