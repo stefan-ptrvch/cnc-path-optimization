@@ -137,6 +137,8 @@ class CNCOptimizer():
         # start an optimization
         progress_bar_position = 0
         for group_name, group in self.nodes.items():
+            if 'REF' in group_name:
+                continue
 
             # If there's not more that one line of this line type, don't
             # optimize it, because we will use it in the "final" optimization
@@ -429,33 +431,28 @@ class GeneticAlgorithm():
 
             # NOTE ovo sa verovatnocom ukrstanja je bas nekako jadno odradjeno,
             # vidi kako si uradio u algoritmu za VI
+            # We're doing Odrder 1 crossover
             if np.random.uniform() < self.prob_cross:
-                crossover_point = int(np.ceil(
-                    np.random.uniform()*(self.num_genes - 1)
-                    ))
+                # Generate points, used for cutting out genetic material
+                crp1 = np.random.randint(self.num_genes)
+                crp2 = np.random.randint(crp1, self.num_genes)
 
-                child1 = np.hstack(
-                        (parent1[:crossover_point], parent2[crossover_point:])
-                        )
-                child2 = np.hstack(
-                        (parent2[:crossover_point], parent1[crossover_point:])
-                        )
+                # Arrays to be populated with genetic material
+                child1 = np.empty(self.num_genes)
+                child2 = np.empty(self.num_genes)
 
-                # Now we have to fix the children, so as to not have repeating
-                # nodes
-                # NOTE ovo verovatno moze brze da se implementira a verovatno i
-                # postoji bolji nacin za ispravljanje dece
-                missing_nodes = self.set_of_nodes - set(child1)
-                for node in missing_nodes:
-                    for j in range(child1.size):
-                        if child1[j] in child1[j + 1:]:
-                            child1[j] = node
+                # Populate children with a cut of material
+                child1[crp1:crp2] = parent1[crp1:crp2]
+                child2[crp1:crp2] = parent2[crp1:crp2]
 
-                missing_nodes = self.set_of_nodes - set(child2)
-                for node in missing_nodes:
-                    for j in range(child2.size):
-                        if child2[j] in child2[j + 1:]:
-                            child2[j] = node
+                # Fill in rest of material using Order 1 crossover
+                other_genes_child1 = list(self.set_of_nodes - set(parent1[crp1:crp2]))
+                other_genes_child2 = list(self.set_of_nodes - set(parent2[crp1:crp2]))
+                for gen_num in range(self.num_genes - (crp2 - crp1)):
+                    idx = (crp2 + gen_num) % self.num_genes
+                    child1[idx] = other_genes_child1[gen_num]
+                    child2[idx] = other_genes_child2[gen_num]
+
             else:
                 child1 = parent1[:]
                 child2 = parent2[:]
