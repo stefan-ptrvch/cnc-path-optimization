@@ -110,9 +110,6 @@ class CNCOptimizer():
         Runs optimizations for all the line types in parallel.
         """
 
-        # Size of population per generation
-        pop_size = 300
-
         # Probability of reproduction
         repro = 0.8
 
@@ -121,9 +118,6 @@ class CNCOptimizer():
 
         # Probability of mutation
         mutation = 0.001
-
-        # Number of generations to evolve
-        num_generations = 1000
 
         # List containing all optimization processes
         processes = []
@@ -139,6 +133,13 @@ class CNCOptimizer():
         for group_name, group in self.nodes.items():
             if 'REF' in group_name:
                 continue
+
+            # Number of generations to evolve
+            num_generations = 30*group.shape[0]
+
+            # Size of population per generation, determined by the size of the
+            # optimization problem (number of nodes)
+            pop_size = 10*group.shape[0]
 
             # If there's not more that one line of this line type, don't
             # optimize it, because we will use it in the "final" optimization
@@ -247,7 +248,14 @@ class CNCOptimizer():
         """
         Saves the results of the optimization to a file.
         """
-        pass
+
+        # Add file extension if there's none
+        if not '.code' in file_name:
+            file_name += '.code'
+
+        # Open file
+        with open(file_name) as f:
+            pass
 
 
     def start_process(self, all_optimizations, node_name, node, pop_size,
