@@ -35,6 +35,15 @@ class CNCOptimizer():
         # List of all lines
         self.lines = []
 
+        # Reference line
+        self.ref_line = None
+
+        # List holding the result
+        self.result = []
+
+        # List holding the initial order of lines
+        self.initial = []
+
         # Generate dictionary of lines
         self.generate_lines_from_file()
 
@@ -51,7 +60,7 @@ class CNCOptimizer():
                 line_type = row[0]
 
                 # The number of the recipe
-                recipe = row[5]
+                recipe = row[-1]
 
                 # The coordinates in the file are Y1, X1, Y2, X2, and we
                 # want to store them as X1, Y1, X2, Y2
@@ -68,6 +77,10 @@ class CNCOptimizer():
 
                 # Generate the node
                 line = Line(line_type, starting_point, endpoint, recipe)
+
+                # If it's an EDGEDEL_LINE line type, set the thikness as well
+                if line_type == 'EDGEDEL_LINE':
+                    line.set_thikness(float(row[5].replace(',', '')))
 
                 # Add the line to the list of lines
                 self.lines.append(line)
@@ -90,7 +103,7 @@ class CNCOptimizer():
             if line_type == 'SCRIBE_LINE' and recipe == '2':
                 group_name = 'SCRIBE_LINE2'
             elif line_type == 'REF':
-                ref_line = line
+                self.ref_line = line
                 continue
             elif self.recipe_grouping:
                 group_name = line_type
@@ -163,8 +176,9 @@ class CNCOptimizer():
         # 4) EDGEDEL_LINE
         # 5) SCRIBE_LINE2
 
-        # The REF line is always first in the solution
-        self.result = [ref_line]
+        # The REF line is always first in the solution, if there is one
+        if self.ref_line:
+            self.result.append(self.ref_line)
 
         # Find all SCRIBE_LINE (non 2 recipe) groups
         for group_name, opt in self.all_optimizations.items():
@@ -200,7 +214,8 @@ class CNCOptimizer():
 
         ### Do the same thing for the initial result (used only for
         # visualization)
-        self.initial = [ref_line]
+        if self.ref_line:
+            self.initial.append(self.ref_line)
 
         # Find all SCRIBE_LINE (non 2 recipe) groups
         for group_name, opt in self.all_optimizations.items():
@@ -248,7 +263,7 @@ class CNCOptimizer():
             # Write the lines to the new file
             for line in self.result:
                 # The format is:
-                # LINE_TYPE, Y1, X1, Y2, X2
+                # LINE_TYPE, Y1, X1, Y2, X2, [TH], RE
                 formatted = line.get_line_type()
                 formatted += ' '
                 formatted += "{:.3f}".format(line.get_starting_point()[1])
@@ -258,6 +273,9 @@ class CNCOptimizer():
                 formatted += "{:.3f}".format(line.get_endpoint()[1])
                 formatted += ', '
                 formatted += "{:.3f}".format(line.get_endpoint()[0])
+                formatted += ', '
+                # If it's and EDGEDEL_LINE line type, add the thikness as well
+                formatted += "{:.3f}".format(line.get_thikness())
                 formatted += ', '
                 formatted += line.get_recipe()
                 formatted += '\n'
@@ -569,6 +587,14 @@ class Line():
         self.endpoint = endpoint
         self.recipe = recipe
 
+    def set_thikness(self, thikness):
+        """
+        Set the line thikness, which is only specified for EDGEDEL_LINE line
+        types.
+        """
+
+        self.thikness = thikness
+
     def get_line_type(self):
         """
         Returns the type of line.
@@ -595,3 +621,10 @@ class Line():
         """
 
         return self.recipe
+
+    def get_thikness(self):
+        """
+        Returns thikness of EDGEDEL_LINE line type.
+        """
+
+        return self.thikness
