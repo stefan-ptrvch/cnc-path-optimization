@@ -32,25 +32,16 @@ class CNCOptimizer():
         # Whether to do recipe grouping
         self.recipe_grouping = recipe_grouping
 
-        # Generate dictionary of nodes
-        self.generate_nodes_from_file()
+        # List of all lines
+        self.lines = []
 
+        # Generate dictionary of lines
+        self.generate_lines_from_file()
 
-    def generate_nodes_from_file(self):
+    def generate_lines_from_file(self):
         """
-        Parses input file and generates the list of nodes that need to be
-        optimized.
-
-        Nodes are represented by 3D arrays of size (1, 2, 2), where the 2nd
-        dimension is the start/end poin and the 3rd is the x/y coordinate of
-        the point.
-
-        The list of nodes is represented by a 3D array of size (N, 2, 2) where
-        N represents the total number of nodes (total number of lines in file).
+        Parses input file and generates line objects for every line.
         """
-
-        # Dictionary which will contain nodes, grouped in a specific order
-        self.nodes = {}
 
         with open(self.file_path, 'r') as path_file:
             reader = csv.reader(path_file, delimiter=' ')
@@ -62,53 +53,55 @@ class CNCOptimizer():
                 # The number of the recipe
                 recipe = row[5]
 
-                # Determine the name of the group
-                # We make groups of nodes in the following manner, if we're
-                # using grouping
-                #  1) REF
-                #  2) SCRIBE_LINE --> Except for Recipe #2
-                #  3) BUSBAR_LINE --> All Recipes
-                #  4) EDGEDEL_LINE --> All Recipes
-                #  5) SCRIBE_LINE --> Only Recipe #2
-                # If we're not using grouping, we split the line types by
-                # group, but keep the line order intact, and SCRIBE_LINE recipe
-                # number 2 at the end
-                if line_type == 'SCRIBE_LINE' and recipe == '2':
-                    group_name = 'SCRIBE_LINE2'
-                elif line_type == 'REF':
-                    group_name = 'REF'
-                elif self.recipe_grouping:
-                    group_name = line_type
-                else:
-                    group_name = line_type + recipe
-
-                # The node itself
                 # The coordinates in the file are Y1, X1, Y2, X2, and we
                 # want to store them as X1, Y1, X2, Y2
                 # We skip the 1st entry since it contains the type of line
-                node = np.array([
+                starting_point = np.array([
                     float(row[2].replace(',', '')),
                     float(row[1].replace(',', '')),
+                    ])
+
+                endpoint = np.array([
                     float(row[4].replace(',', '')),
                     float(row[3].replace(',', '')),
-                    ]).reshape((1, 2, 2))
+                    ])
 
-                # Add line to dictionary, if it isn't in there
-                if group_name not in self.nodes:
-                    self.nodes[group_name] = node
+                # Generate the node
+                line = Line(line_type, starting_point, endpoint, recipe)
 
-                else:
-                    # Add the node to the existing nodes
-                    self.nodes[group_name] = np.vstack((
-                        self.nodes[group_name],
-                        node
-                        ))
+                # Add the line to the list of lines
+                self.lines.append(line)
 
 
     def optimize(self):
         """
         Runs optimizations for all the line types in parallel.
         """
+
+        # Group the lines
+        groups = {}
+        for line in self.lines:
+
+            # Determine the line type and recipe number of the line
+            line_type = line.get_line_type()
+            recipe = line.get_recipe()
+
+            # Determine to which group this line belongs
+            if line_type == 'SCRIBE_LINE' and recipe == '2':
+                group_name = 'SCRIBE_LINE2'
+            elif line_type == 'REF':
+                ref_line = line
+                continue
+            elif self.recipe_grouping:
+                group_name = line_type
+            else:
+                group_name = line_type + recipe
+
+            # Add the line to the group
+            if group_name not in groups:
+                groups[group_name] = [line]
+            else:
+                groups[group_name].append(line)
 
         # Probability of reproduction
         repro = 0.8
@@ -127,19 +120,16 @@ class CNCOptimizer():
         process_manager = Manager()
         self.all_optimizations = process_manager.dict()
 
-        # For every line type, and recipe number (if we use recipe grouping),
-        # start an optimization
+        # Start a thread for every group
         progress_bar_position = 0
-        for group_name, group in self.nodes.items():
-            if 'REF' in group_name:
-                continue
+        for group_name, group in groups.items():
 
             # Number of generations to evolve
-            num_generations = 30*group.shape[0]
+            num_generations = 30*len(group)
 
             # Size of population per generation, determined by the size of the
             # optimization problem (number of nodes)
-            pop_size = 10*group.shape[0]
+            pop_size = 10*len(group)
 
             # If there's not more that one line of this line type, don't
             # optimize it, because we will use it in the "final" optimization
@@ -173,76 +163,76 @@ class CNCOptimizer():
         # 4) EDGEDEL_LINE
         # 5) SCRIBE_LINE2
 
-        self.result = [('REF', self.nodes['REF'][0])]
+        # The REF line is always first in the solution
+        self.result = [ref_line]
 
         # Find all SCRIBE_LINE (non 2 recipe) groups
         for group_name, opt in self.all_optimizations.items():
             if 'SCRIBE_LINE' in group_name and '2' not in group_name:
-                for node_number in opt.best_result['solution']:
-                    self.result.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.result.extend(
+                        [groups[group_name][index] for index in
+                            opt.best_result['solution']]
+                        )
 
         # Find all BUSBAR_LINE groups
         for group_name, opt in self.all_optimizations.items():
             if 'BUSBAR_LINE' in group_name:
-                for node_number in opt.best_result['solution']:
-                    self.result.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.result.extend(
+                        [groups[group_name][index] for index in
+                            opt.best_result['solution']]
+                        )
 
         # Find all EDGEDEL_LINE groups
         for group_name, opt in self.all_optimizations.items():
             if 'EDGEDEL_LINE' in group_name:
-                for node_number in opt.best_result['solution']:
-                    self.result.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.result.extend(
+                        [groups[group_name][index] for index in
+                            opt.best_result['solution']]
+                        )
 
         # Find all SCRIBE_LINE2 groups
         for group_name, opt in self.all_optimizations.items():
             if 'SCRIBE_LINE2' == group_name:
-                for node_number in opt.best_result['solution']:
-                    self.result.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.result.extend(
+                        [groups[group_name][index] for index in
+                            opt.best_result['solution']]
+                        )
 
         ### Do the same thing for the initial result (used only for
         # visualization)
-        self.initial = [('REF', self.nodes['REF'][0])]
+        self.initial = [ref_line]
 
         # Find all SCRIBE_LINE (non 2 recipe) groups
         for group_name, opt in self.all_optimizations.items():
             if 'SCRIBE_LINE' in group_name and '2' not in group_name:
-                for node_number in opt.initial_result['solution']:
-                    self.initial.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.initial.extend(
+                        [groups[group_name][index] for index in
+                            opt.initial_result['solution']]
+                        )
 
         # Find all BUSBAR_LINE groups
         for group_name, opt in self.all_optimizations.items():
             if 'BUSBAR_LINE' in group_name:
-                for node_number in opt.initial_result['solution']:
-                    self.initial.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.initial.extend(
+                        [groups[group_name][index] for index in
+                            opt.initial_result['solution']]
+                        )
 
         # Find all EDGEDEL_LINE groups
         for group_name, opt in self.all_optimizations.items():
             if 'EDGEDEL_LINE' in group_name:
-                for node_number in opt.initial_result['solution']:
-                    self.initial.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
+                self.initial.extend(
+                        [groups[group_name][index] for index in
+                            opt.initial_result['solution']]
+                        )
 
         # Find all SCRIBE_LINE2 groups
         for group_name, opt in self.all_optimizations.items():
             if 'SCRIBE_LINE2' == group_name:
-                for node_number in opt.initial_result['solution']:
-                    self.initial.append((
-                        group_name,
-                        self.nodes[group_name][node_number]))
-
+                self.initial.extend(
+                        [groups[group_name][index] for index in
+                            opt.initial_result['solution']]
+                        )
 
     def save(self, file_name):
         """
@@ -256,7 +246,6 @@ class CNCOptimizer():
         # Open file
         with open(file_name) as f:
             pass
-
 
     def start_process(self, all_optimizations, node_name, node, pop_size,
             repro, crossover, mutation, num_generations, progress_bar_position):
@@ -274,7 +263,6 @@ class CNCOptimizer():
 
         # Save the result (optimized object)
         all_optimizations[node_name] = opt
-
 
     def visualize(self):
         """
@@ -355,7 +343,6 @@ class GeneticAlgorithm():
         # Progress bar position for tqdm
         self.progress_bar_position = progress_bar_position
 
-
     def generate_distance_matrix(self):
         """
         Generates matrix of Euclidian distances between every two nodes.
@@ -365,9 +352,8 @@ class GeneticAlgorithm():
         for i in range(self.num_genes):
             for j in range(self.num_genes):
                 self.distance_matrix[i, j] = np.linalg.norm(
-                    self.nodes[i][1] - self.nodes[j][0]
+                    self.nodes[i].get_endpoint() - self.nodes[j].get_starting_point()
                         )
-
 
     def evaluate_generation(self):
         """
@@ -393,7 +379,6 @@ class GeneticAlgorithm():
         # Calculate the fitness
         self.fitness = self.num_genes*self.max_distance - self.path_cost
 
-
     def reproduction(self):
         """
         Determines which individuals get to move to the next generation (which
@@ -411,7 +396,6 @@ class GeneticAlgorithm():
             # generation
             index_of_winner = np.argmax(self.cumulative > ball).astype(int)
             self.population[i, :] = self.old_population[index_of_winner, :]
-
 
     def crossing(self):
         """
@@ -469,7 +453,6 @@ class GeneticAlgorithm():
             self.population[self.num_repro + 2*i, :] = child1
             self.population[self.num_repro + 2*i + 1, :] = child2
 
-
     def mutation(self):
         """
         Mutates a set number of individuals in the population, by swapping two
@@ -484,7 +467,6 @@ class GeneticAlgorithm():
                     individual, gene2
                     ]
             self.population[individual, gene2] = gene
-
 
     def optimize(self):
         """
@@ -554,3 +536,45 @@ class GeneticAlgorithm():
 
             # Perform mutation
             self.mutation()
+
+
+class Line():
+    """
+    Line which represents where the CNC head will perform cutting.
+    """
+
+    def __init__(self, line_type, starting_point, endpoint, recipe):
+        """
+        Sets all parameters used for describing a line.
+        """
+        self.line_type = line_type
+        self.starting_point = starting_point
+        self.endpoint = endpoint
+        self.recipe = recipe
+
+    def get_line_type(self):
+        """
+        Returns the type of line.
+        """
+
+        return self.line_type
+
+    def get_starting_point(self):
+        """
+        Returns the starting point of a line.
+        """
+
+        return self.starting_point
+
+    def get_endpoint(self):
+        """
+        Returns the endpoint of a line.
+        """
+        return self.endpoint
+
+    def get_recipe(self):
+        """
+        Returns the recipe of a line.
+        """
+
+        return self.recipe

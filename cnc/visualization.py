@@ -24,6 +24,10 @@ class Visualizer():
         # Determine which type of line gets which color
         color_map = {
                 'REF': Category20c_20[16],
+                'REF1': Category20c_20[16],
+                'REF2': Category20c_20[16],
+                'REF3': Category20c_20[16],
+                'REF4': Category20c_20[16],
                 'SCRIBE_LINE': Category20c_20[0],
                 'SCRIBE_LINE1': Category20c_20[0],
                 'SCRIBE_LINE2': Category20c_20[1],
@@ -40,30 +44,34 @@ class Visualizer():
                 'EDGEDEL_LINE3': Category20c_20[10],
                 'EDGEDEL_LINE4': Category20c_20[11]
                 }
+
         # Color of the non cutting line
-        red = Category10_4[3]
         radius = 13
         line_width = 3
 
         scatter_points = {}
         for line in data:
+            group_name = line.get_line_type() + line.get_recipe()
+            sp = line.get_starting_point()
+            ep = line.get_endpoint()
+
             # Sort scatter points
-            if line[0] not in scatter_points:
-                scatter_points[line[0]] = {
-                        'x': [line[1][0, 0], line[1][1, 0]],
-                        'y': [line[1][0, 1], line[1][1, 1]]
+            if group_name not in scatter_points:
+                scatter_points[group_name] = {
+                        'x': [sp[0], ep[0]],
+                        'y': [sp[1], ep[1]]
                         }
             else:
-                scatter_points[line[0]]['x'].append(line[1][0, 0])
-                scatter_points[line[0]]['x'].append(line[1][1, 0])
-                scatter_points[line[0]]['y'].append(line[1][0, 1])
-                scatter_points[line[0]]['y'].append(line[1][1, 1])
+                scatter_points[group_name]['x'].append(sp[0])
+                scatter_points[group_name]['x'].append(ep[0])
+                scatter_points[group_name]['y'].append(sp[1])
+                scatter_points[group_name]['y'].append(ep[1])
 
             # Cutting line
             plot.line(
-                    [line[1][0, 0], line[1][1, 0]],
-                    [line[1][0, 1], line[1][1, 1]],
-                    color=color_map[line[0]],
+                    [sp[0], ep[0]],
+                    [sp[1], ep[1]],
+                    color=color_map[group_name],
                     line_width=line_width
                     )
 
@@ -79,20 +87,25 @@ class Visualizer():
 
         # Add travel lines
         for line in range(len(data) - 1):
+            # Get the endpoint of the current line, as well as the starting
+            # point of the next line
+            ep0 = data[line].get_endpoint()
+            sp1 = data[line + 1].get_starting_point()
+
+            # Plot the travel line (non-cutting line)
             plot.line(
                     [
-                        data[line][1][1][0],
-                        data[line + 1][1][0][0]],
+                        ep0[0],
+                        sp1[0]],
                     [
-                        data[line][1][1][1],
-                        data[line + 1][1][0][1]
+                        ep0[1],
+                        sp1[1]
                         ],
                     color='black',
                     legend='Non Cutting'
                     )
 
         return plot
-
 
     def split_line(self, start, end, increment):
         """
@@ -105,7 +118,6 @@ class Visualizer():
                 np.linspace(start[1], end[1], num_splits)
                 )
 
-
     def generate_tool_path(self, data, step_size):
         """
         Function that generates the path for the cutting tool, used for
@@ -115,9 +127,14 @@ class Visualizer():
         lines_x = np.ndarray((0))
         lines_y = np.ndarray((0))
         for line_number in range(len(data) - 1):
+            sp0 = data[line_number].get_starting_point()
+            ep0 = data[line_number].get_endpoint()
 
-            line = data[line_number][1]
-            next_line = data[line_number + 1][1]
+            sp1 = data[line_number + 1].get_starting_point()
+            ep1 = data[line_number + 1].get_endpoint()
+
+            line = np.vstack((sp0, ep0))
+            next_line = np.vstack((sp1, ep1))
 
             # Cutting line
             line_x, line_y = self.split_line(line[0], line[1], step_size)
@@ -131,15 +148,14 @@ class Visualizer():
 
         # Add the last line (cutting line)
         line_x, line_y = self.split_line(
-                data[-1][1][0],
-                data[-1][1][1],
+                data[-1].get_starting_point(),
+                data[-1].get_endpoint(),
                 step_size
                 )
         lines_x = np.hstack((lines_x, line_x))
         lines_y = np.hstack((lines_y, line_y))
 
         return lines_x, lines_y
-
 
     def visualize_solution(self):
         """
