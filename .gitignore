@@ -1,2 +1,4 @@
 __pycache__
 *.html
+*.code
+!code_files

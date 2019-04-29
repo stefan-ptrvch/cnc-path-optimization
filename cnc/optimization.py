@@ -244,8 +244,25 @@ class CNCOptimizer():
             file_name += '.code'
 
         # Open file
-        with open(file_name) as f:
-            pass
+        with open(file_name, 'w') as f:
+            # Write the lines to the new file
+            for line in self.result:
+                # The format is:
+                # LINE_TYPE, Y1, X1, Y2, X2
+                formatted = line.get_line_type()
+                formatted += ' '
+                formatted += "{:.3f}".format(line.get_starting_point()[1])
+                formatted += ', '
+                formatted += "{:.3f}".format(line.get_starting_point()[0])
+                formatted += ', '
+                formatted += "{:.3f}".format(line.get_endpoint()[1])
+                formatted += ', '
+                formatted += "{:.3f}".format(line.get_endpoint()[0])
+                formatted += ', '
+                formatted += line.get_recipe()
+                formatted += '\n'
+
+                f.write(formatted)
 
     def start_process(self, all_optimizations, node_name, node, pop_size,
             repro, crossover, mutation, num_generations, progress_bar_position):
