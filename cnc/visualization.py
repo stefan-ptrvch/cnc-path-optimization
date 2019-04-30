@@ -9,16 +9,43 @@ from bokeh.models.markers import Triangle
 
 class Visualizer():
     """
-    Visualizes results of GA optimization of CNC shortest path problem.
+    Visualizes the result of the optimization for the CNC shortest cutting tool
+    travel path, using bokeh.
     """
 
     def __init__(self, result, initial):
+        """
+        Parameters
+        ----------
+        result : list of Line
+            List of Line objects, sorted in the order that represents the
+            result of the optimization.
+        initial : list of Line
+            List of line objects, obtained at the beginning of the
+            optimization, used for comaprison.
+        """
+
         self.result = result
         self.initial = initial
 
     def populate_plot(self, plot, data):
         """
-        Draws one visualization on a plot.
+        Adds data to the plot, like starting and endpoints of cutting, lines
+        representing the cutting path and lines representnig the non-cutting
+        path.
+
+        Parameters
+        ----------
+        plot : bokeh figure object
+            Figure object on which the content of the `data` object will be
+            displayed.
+        data : list of Line
+            List of line objects, which have to be drawn on the figure.
+
+        Returns
+        -------
+        plot : bokeh figure object
+            Figure populated with data from the `data` object.
         """
 
         # Determine which type of line gets which color
@@ -109,9 +136,29 @@ class Visualizer():
 
     def split_line(self, start, end, increment):
         """
-        Function that generates desired number of points between two points.
+        Function that generates a number of points between two points.
+
+        Generates two vectors, which represent the X and Y coordinates between
+        points `start` and `end`.
+
+        Parameters
+        ----------
+        start : np.array
+            Numpy array containing X and Y of the starting point.
+        end : np.array
+            Numpy array containing X and Y of the endpoint.
+        increment : int
+            Euclidian distance between two successive entries in the `start`
+            and `end` points.
+
+        Returns
+        -------
+        out : touple of np.arrays
+            Touple where the 1st element is the X coordinates and the 2nd
+            element is the Y coordinates of the line.
         """
 
+        # Determine the number of splits of the line
         num_splits = int(np.linalg.norm(end - start)/increment)
         return (
                 np.linspace(start[0], end[0], num_splits),
@@ -120,8 +167,22 @@ class Visualizer():
 
     def generate_tool_path(self, data, step_size):
         """
-        Function that generates the path for the cutting tool, used for
-        visualization.
+        Generates the whole trajectory of the cutting tool, with a step of
+        `step_size`.
+
+        Parameters
+        ----------
+        data : list of Line
+            List of line objects, from which the trajectory needs to be
+            generated.
+        step_size : int
+            The Euclidian distance between two steps of the trajectory.
+
+        Returns
+        -------
+        out : touple of np.arrays
+            Touple where the 1st and 2nd element represents the X and Y
+            coordinates of the whole cutting tool trajectory, respectively.
         """
 
         lines_x = np.ndarray((0))
@@ -157,9 +218,10 @@ class Visualizer():
 
         return lines_x, lines_y
 
-    def visualize_solution(self):
+    def visualize(self):
         """
-        Draw the plot of the best solution.
+        Generates a plot using bokeh, which displays the initial trajectory and
+        the optimized trajectory of the cutting tool.
         """
 
         # Tools that will be displayed on the plots

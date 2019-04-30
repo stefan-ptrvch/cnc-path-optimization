@@ -18,5 +18,5 @@ opt.optimize()
 # Write the optimization to a file
 opt.save('result')
 
-# Generate visualization files
+# Generate visualization file
 opt.visualize()

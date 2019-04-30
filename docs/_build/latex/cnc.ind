@@ -1,0 +1,67 @@
+\begin{sphinxtheindex}
+\let\bigletter\sphinxstyleindexlettergroup
+\let\spxpagem \sphinxstyleindexpagemain
+\let\spxentry \sphinxstyleindexentry
+\let\spxextra \sphinxstyleindexextra
+
+  \bigletter C
+  \item \spxentry{cnc.optimization}\spxextra{module}, \hyperpage{3}
+  \item \spxentry{cnc.visualization}\spxextra{module}, \hyperpage{5}
+  \item \spxentry{CNCOptimizer}\spxextra{class in cnc.optimization}, \hyperpage{3}
+  \item \spxentry{crossover()}\spxextra{cnc.optimization.GeneticAlgorithm method}, \hyperpage{4}
+
+  \indexspace
+  \bigletter E
+  \item \spxentry{evaluate\_generation()}\spxextra{cnc.optimization.GeneticAlgorithm method}, 
+		\hyperpage{4}
+
+  \indexspace
+  \bigletter G
+  \item \spxentry{generate\_distance\_matrix()}\spxextra{cnc.optimization.GeneticAlgorithm method}, 
+		\hyperpage{4}
+  \item \spxentry{generate\_lines\_from\_file()}\spxextra{cnc.optimization.CNCOptimizer method}, 
+		\hyperpage{3}
+  \item \spxentry{generate\_tool\_path()}\spxextra{cnc.visualization.Visualizer method}, 
+		\hyperpage{6}
+  \item \spxentry{GeneticAlgorithm}\spxextra{class in cnc.optimization}, \hyperpage{4}
+  \item \spxentry{get\_endpoint()}\spxextra{cnc.optimization.Line method}, \hyperpage{5}
+  \item \spxentry{get\_line\_type()}\spxextra{cnc.optimization.Line method}, \hyperpage{5}
+  \item \spxentry{get\_recipe()}\spxextra{cnc.optimization.Line method}, \hyperpage{5}
+  \item \spxentry{get\_starting\_point()}\spxextra{cnc.optimization.Line method}, \hyperpage{5}
+  \item \spxentry{get\_thikness()}\spxextra{cnc.optimization.Line method}, \hyperpage{5}
+
+  \indexspace
+  \bigletter L
+  \item \spxentry{Line}\spxextra{class in cnc.optimization}, \hyperpage{4}
+
+  \indexspace
+  \bigletter M
+  \item \spxentry{mutation()}\spxextra{cnc.optimization.GeneticAlgorithm method}, \hyperpage{4}
+
+  \indexspace
+  \bigletter O
+  \item \spxentry{optimize()}\spxextra{cnc.optimization.CNCOptimizer method}, \hyperpage{3}
+  \item \spxentry{optimize()}\spxextra{cnc.optimization.GeneticAlgorithm method}, \hyperpage{4}
+
+  \indexspace
+  \bigletter P
+  \item \spxentry{populate\_plot()}\spxextra{cnc.visualization.Visualizer method}, \hyperpage{6}
+
+  \indexspace
+  \bigletter R
+  \item \spxentry{reproduction()}\spxextra{cnc.optimization.GeneticAlgorithm method}, \hyperpage{4}
+
+  \indexspace
+  \bigletter S
+  \item \spxentry{save()}\spxextra{cnc.optimization.CNCOptimizer method}, \hyperpage{3}
+  \item \spxentry{set\_thikness()}\spxextra{cnc.optimization.Line method}, \hyperpage{5}
+  \item \spxentry{split\_line()}\spxextra{cnc.visualization.Visualizer method}, \hyperpage{6}
+  \item \spxentry{start\_process()}\spxextra{cnc.optimization.CNCOptimizer method}, \hyperpage{3}
+
+  \indexspace
+  \bigletter V
+  \item \spxentry{visualize()}\spxextra{cnc.optimization.CNCOptimizer method}, \hyperpage{4}
+  \item \spxentry{visualize()}\spxextra{cnc.visualization.Visualizer method}, \hyperpage{6}
+  \item \spxentry{Visualizer}\spxextra{class in cnc.visualization}, \hyperpage{5}
+
+\end{sphinxtheindex}

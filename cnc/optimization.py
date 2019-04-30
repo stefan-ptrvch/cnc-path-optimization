@@ -15,14 +15,22 @@ from cnc.visualization import Visualizer
 
 class CNCOptimizer():
     """
-    Parses the input file, and generates a bunch of ShortestPath optimizers,
-    for different line types and for recipe groupings, if it's required. It
-    then runs the optimizers in parallel and saves the result.
+    Finds the shortest path for CNC cutting.
+
+    Parses the input file, and generates a number of GeneticAlgorithm objects,
+    for different groups of lines, and performs the optimization in parallel.
+    Makes visualizations of the cutting trajectory using bokeh.
     """
 
     def __init__(self, file_path, recipe_grouping=True):
         """
-        Initializes the object.
+        Parameters
+        ----------
+        file_path : str
+            The path to a .code file which needs to be optimized.
+        recipe_grouping : bool
+            Tells the optimizer whether to treat recipes individually or group
+            them together.
         """
 
         # Path to file which contains line coordinates which need to be
@@ -49,7 +57,7 @@ class CNCOptimizer():
 
     def generate_lines_from_file(self):
         """
-        Parses input file and generates line objects for every line.
+        Parses the input file and generates Line objects for every line.
         """
 
         with open(self.file_path, 'r') as path_file:
@@ -88,7 +96,7 @@ class CNCOptimizer():
 
     def optimize(self):
         """
-        Runs optimizations for all the line types in parallel.
+        Groups Line objects, and runs a thread per optimization group.
         """
 
         # Group the lines
@@ -251,7 +259,13 @@ class CNCOptimizer():
 
     def save(self, file_name):
         """
-        Saves the results of the optimization to a file.
+        Saves the results of the optimization to a file. Adds .code file
+        extension if it's not specified.
+
+        Parameters
+        ----------
+        file_name : str
+            Filename of the file which will contain the optimized result.
         """
 
         # Add file extension if there's none
@@ -285,8 +299,32 @@ class CNCOptimizer():
     def start_process(self, all_optimizations, node_name, node, pop_size,
             repro, crossover, mutation, num_generations, progress_bar_position):
         """
-        Method that creates initializes the optimization object, starts the
-        optimization and saves the result.
+        Method that creates the optimization object, starts the optimization
+        and saves the result.
+
+        Parameters
+        ----------
+        all_optimizations : dict
+            Dictionary which will be used to store the optimization object that
+            corresponds to every line group.
+        node_name : str
+            The name of the group which is being optimized.
+        node : list of Line
+            A list of Line objects, which represent the lines that belong to
+            the group being optimized.
+        pop_size : int
+            Size of the population for every generation.
+        repro : float
+            Probability of reproduction.
+        crossover : float
+            Probability of crossover.
+        mutation : float
+            Probability of mutation.
+        num_generations : int
+            Number of iterations for which to run the algorithm.
+        progress_bar_position : int
+            Determines the row in which the progress bar will be displayed
+            while optimizing.
         """
 
         # Initialize the optimization object
@@ -301,24 +339,41 @@ class CNCOptimizer():
 
     def visualize(self):
         """
-        Visualizes the result of the optimization.
+        Visualizes the result of the optimization, using the Visualizer class.
         """
 
         viz = Visualizer(self.result, self.initial)
-        viz.visualize_solution()
+        viz.visualize()
 
 
 class GeneticAlgorithm():
     """
+    Solves an instance of the travelling salesman problem, for the CNC machine.
+
     Finds the shortest cutting tool travel path (SCTTP) using the genetic
-    algorithm.
+    algorithm optimization method.
     """
 
     def __init__(self, nodes, pop_size, repro, crossover, mutation,
             num_generations, progress_bar_position=0):
         """
-        Initializes the optimization object with all the needed values to run
-        the optimization.
+        Parameters
+        ----------
+        nodes : list of Line
+            List of Line objects which are used to generate the distance
+            matrix.
+        pop_size : int
+            Size of the population per generation.
+        repro : float
+            Probability of reproduction.
+        crossover : float
+            Probability of crossover.
+        mutation : float
+            Probability of mutation
+        num_generations : int
+            Number of iterations to run the algorithm for.
+        progress_bar_position : int
+            Row in which the progress bar should be displayed.
         """
 
         # Get the nodes
@@ -354,7 +409,7 @@ class GeneticAlgorithm():
         self.num_cross = self.pop_size - self.num_repro
         self.num_mut = int(np.ceil(self.prob_mut*self.pop_size*self.num_genes))
 
-        # We need an even number of crossings (because we need pairs)
+        # We need an even number of crossovers (because we need pairs)
         if np.mod(self.num_cross, 2) == 1:
             self.num_cross += 1
             self.num_repro -= 1
@@ -372,7 +427,7 @@ class GeneticAlgorithm():
         self.path_cost = None
 
         # Fitness of generation, which is inverse normalized path cost (for
-        # optimizational puproses)
+        # optimization puproses)
         self.fitness = None
 
         # Progress bar position for tqdm
@@ -395,10 +450,9 @@ class GeneticAlgorithm():
         Evaluates the path cost and fitness of the whole generation.
 
         Path cost is calculated as the Euclidian distance between the second
-        poin in a node and the first point in the next node.
-
-        Fitness is calculated as the maxmimum path cost of the generation,
-        minus the path cost.
+        poin in a node and the first point in the next node. Fitness is
+        calculated as the maxmimum possible path cost, minus the actual path
+        cost.
         """
 
         self.path_cost = np.zeros(self.pop_size)
@@ -432,13 +486,13 @@ class GeneticAlgorithm():
             index_of_winner = np.argmax(self.cumulative > ball).astype(int)
             self.population[i, :] = self.old_population[index_of_winner, :]
 
-    def crossing(self):
+    def crossover(self):
         """
-        Takes individuals and crosses them to generate new individuals for the
-        population.
+        Generates part of the population using crossover.
+
+        Takes two individuals at a time, based on fitness and combines them,
+        using the Order 1 Crossover method.
         """
-        # NOTE videti da li moze sve ovo astype da se obrise (to bi trebalo da
-        # ubrza algoritam)
 
         # We're playing roulette, so we have to generate a ball that falls on
         # some individual
@@ -505,7 +559,7 @@ class GeneticAlgorithm():
 
     def optimize(self):
         """
-        Runs the optimizational algorithm trying to find the shortest path.
+        Runs the optimization algorithm trying to find the shortest path.
         """
 
         # Numbers representing the nodes
@@ -549,7 +603,7 @@ class GeneticAlgorithm():
                     self.initial_result['path_cost'] = self.path_cost[0]
 
             # Calculate cumulative sum for roulette game (used for
-            # reproduction and crossing)
+            # reproduction and crossover)
             self.cumulative = self.fitness.cumsum()
 
             # Generate a placeholder for the new population, and remember
@@ -566,8 +620,8 @@ class GeneticAlgorithm():
             # Perform reproduction
             self.reproduction()
 
-            # Perform crossing
-            self.crossing()
+            # Perform crossover
+            self.crossover()
 
             # Perform mutation
             self.mutation()
@@ -580,8 +634,21 @@ class Line():
 
     def __init__(self, line_type, starting_point, endpoint, recipe):
         """
-        Sets all parameters used for describing a line.
+        Parameters
+        ----------
+        line_type : str
+            Name of the line type, contained in the 1st column of the .code
+            file.
+        starting_point : np.array
+            Numpy array of two coordinates, X1 and Y1, representing the
+            starting point of cutting.
+        endpoint : np.array
+            Numpy array of two coordinates, X2 and Y2, representing the
+            endpoint of cutting.
+        recipe : str
+            Recipe number, last column of .code file.
         """
+
         self.line_type = line_type
         self.starting_point = starting_point
         self.endpoint = endpoint
@@ -591,6 +658,12 @@ class Line():
         """
         Set the line thikness, which is only specified for EDGEDEL_LINE line
         types.
+
+        Parameters
+        ----------
+        thikness : str
+            Number representing the thinkess of the line. Not used for
+            calculations, only when writing to new .code file.
         """
 
         self.thikness = thikness
@@ -598,6 +671,11 @@ class Line():
     def get_line_type(self):
         """
         Returns the type of line.
+
+        Returns
+        -------
+        line_type : str
+            Name of line type.
         """
 
         return self.line_type
@@ -605,6 +683,12 @@ class Line():
     def get_starting_point(self):
         """
         Returns the starting point of a line.
+
+        Returns
+        -------
+        starting_point : np.array
+            Numpy array of two coordinates, X1 and Y1, representing the
+            starting point of cutting.
         """
 
         return self.starting_point
@@ -612,12 +696,23 @@ class Line():
     def get_endpoint(self):
         """
         Returns the endpoint of a line.
+
+        Returns
+        -------
+        endpoint : np.array
+            Numpy array of two coordinates, X2 and Y2, representing the
+            endpoint of cutting.
         """
         return self.endpoint
 
     def get_recipe(self):
         """
         Returns the recipe of a line.
+
+        Returns
+        -------
+        recipe : str
+            Recipe number.
         """
 
         return self.recipe
@@ -625,6 +720,11 @@ class Line():
     def get_thikness(self):
         """
         Returns thikness of EDGEDEL_LINE line type.
+
+        Returns
+        -------
+        thikness : str
+            Number representing the thikness of the line.
         """
 
         return self.thikness
