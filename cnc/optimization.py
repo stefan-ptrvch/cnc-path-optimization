@@ -289,8 +289,9 @@ class CNCOptimizer():
                 formatted += "{:.3f}".format(line.get_endpoint()[0])
                 formatted += ', '
                 # If it's and EDGEDEL_LINE line type, add the thikness as well
-                formatted += "{:.3f}".format(line.get_thikness())
-                formatted += ', '
+                if 'EDGEDEL_LINE' == line.get_line_type():
+                    formatted += "{:.3f}".format(line.get_thikness())
+                    formatted += ', '
                 formatted += line.get_recipe()
                 formatted += '\n'
 
@@ -457,13 +458,13 @@ class GeneticAlgorithm():
 
         self.path_cost = np.zeros(self.pop_size)
 
-        # Maybe this is possible without doing a loop
-        for individual in range(self.pop_size):
-            for node in range(self.num_genes - 1):
-                self.path_cost[individual] += self.distance_matrix[
-                    self.population[individual][node],
-                    self.population[individual][node + 1]
-                        ]
+        # Row and column indices of entries distance matrix, needed for path
+        # cost calculation (see distance matrix)
+        rows = self.population[:, :-1]
+        cols = self.population[:, 1:]
+
+        # Get the cost
+        self.path_cost = self.distance_matrix[rows, cols].sum(axis=1)
 
         # Calculate the fitness
         self.fitness = self.num_genes*self.max_distance - self.path_cost
@@ -510,8 +511,6 @@ class GeneticAlgorithm():
             index_of_winner = np.argmax(self.cumulative > ball).astype(int)
             parent2 = self.old_population[index_of_winner, :]
 
-            # NOTE ovo sa verovatnocom ukrstanja je bas nekako jadno odradjeno,
-            # vidi kako si uradio u algoritmu za VI
             # We're doing Odrder 1 crossover
             if np.random.uniform() < self.prob_cross:
                 # Generate points, used for cutting out genetic material

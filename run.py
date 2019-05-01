@@ -7,10 +7,10 @@ importlib.reload(optimization)
 from cnc.optimization import CNCOptimizer
 
 # Path to input file
-path_file = './path_files/lea_stpl001_fused.code'
+path_file = './path_files/p3_stpl001.code'
 
 # Generate optimization object
-opt = CNCOptimizer(path_file, recipe_grouping=False)
+opt = CNCOptimizer(path_file, recipe_grouping=True)
 
 # Run the optimization
 opt.optimize()
