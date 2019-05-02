@@ -184,6 +184,13 @@ class CNCOptimizer():
         # 4) EDGEDEL_LINE
         # 5) SCRIBE_LINE2
 
+        # Flip all lines that need to be flipped
+        for group_name, opt in self.all_optimizations.items():
+            for index, flip in enumerate(opt.best_result['flip']):
+                if flip:
+                    line_index = opt.best_result['solution'][index]
+                    self.lines[line_index].flip_line()
+
         # The REF line is always first in the solution, if there is one
         if self.ref_line:
             self.result.append(self.ref_line)
@@ -437,14 +444,41 @@ class GeneticAlgorithm():
     def generate_distance_matrix(self):
         """
         Generates matrix of Euclidian distances between every two nodes.
+
+        The matrix is of 2Nx2N size, where N is the number of genes, since the
+        line can be oriented either way.
         """
 
-        self.distance_matrix = np.zeros((self.num_genes, self.num_genes))
+        self.distance_matrix = np.zeros((2*self.num_genes, 2*self.num_genes))
+
+        # Non-flipped lines
         for i in range(self.num_genes):
             for j in range(self.num_genes):
                 self.distance_matrix[i, j] = np.linalg.norm(
                     self.nodes[i].get_endpoint() - self.nodes[j].get_starting_point()
                         )
+
+        # 1st line flipped
+        for i in range(self.num_genes):
+            for j in range(self.num_genes):
+                self.distance_matrix[self.num_genes + i, j] = np.linalg.norm(
+                    self.nodes[i].get_starting_point() - self.nodes[j].get_starting_point()
+                        )
+
+        # 2nd line flipped
+        for i in range(self.num_genes):
+            for j in range(self.num_genes):
+                self.distance_matrix[i, self.num_genes + j] = np.linalg.norm(
+                    self.nodes[i].get_endpoint() - self.nodes[j].get_endpoint()
+                        )
+
+        # Both lines flipped
+        for i in range(self.num_genes):
+            for j in range(self.num_genes):
+                self.distance_matrix[self.num_genes + i, self.num_genes + j] = np.linalg.norm(
+                    self.nodes[i].get_starting_point() - self.nodes[j].get_endpoint()
+                        )
+
 
     def evaluate_generation(self):
         """
@@ -463,8 +497,22 @@ class GeneticAlgorithm():
         rows = self.population[:, :-1]
         cols = self.population[:, 1:]
 
+        # Use a heuristic to try and estimate the possible lowest path cost
+        # when accounting for bi-directional optimization
+        all_costs = np.empty((4, self.pop_size, self.num_genes - 1))
+        all_costs[0] = self.distance_matrix[rows, cols]
+        all_costs[1] = self.distance_matrix[rows + self.num_genes, cols]
+        all_costs[2] = self.distance_matrix[rows, cols + self.num_genes]
+        all_costs[3] = self.distance_matrix[
+                rows + self.num_genes,
+                cols + self.num_genes
+                ]
+
+        all_costs = all_costs.min(axis=0)
+
         # Get the cost
-        self.path_cost = self.distance_matrix[rows, cols].sum(axis=1)
+        #  self.path_cost = self.distance_matrix[rows, cols].sum(axis=1)
+        self.path_cost = all_costs.sum(axis=1)
 
         # Calculate the fitness
         self.fitness = self.num_genes*self.max_distance - self.path_cost
@@ -625,6 +673,46 @@ class GeneticAlgorithm():
             # Perform mutation
             self.mutation()
 
+        # Try finding the best orientation for all the lines, using the
+        # hill-descent algorithm
+        self.bi_directional()
+
+    def bi_directional(self):
+        """
+        Uses hill-descent to find the best solution for bi-directional
+        problem.
+        """
+
+        # Take the path cost of the non-bi-directional solution as the
+        # currenlty best solution
+        result = self.best_result['solution']
+        current_best = result[:]
+        rows = current_best[:-1]
+        cols = current_best[1:]
+        current_best_cost = self.distance_matrix[rows, cols].sum()
+        current_best_flip = np.zeros(self.num_genes, dtype=bool)
+
+        num_iter = self.num_genes*1000
+        for i in range(num_iter):
+            # Generate a vector which determines which of the lines need to be
+            # flipped
+            flip = np.zeros((self.num_genes), dtype='int')
+            flip[np.random.uniform(size=self.num_genes) > i/num_iter] = self.num_genes
+
+            # Index into distance matrix, and calculate path cost
+            bi_result = result + flip
+            rows = bi_result[:-1]
+            cols = bi_result[1:]
+            cost = self.distance_matrix[rows, cols].sum()
+            if cost < current_best_cost:
+                current_best_cost = cost
+                current_best = bi_result[:]
+                current_best_flip = flip
+                print("FOUND:", current_best_cost)
+
+        # Set the bi-directionally optimized result as the best
+        self.best_result['path_cost'] = current_best_cost
+        self.best_result['flip'] = current_best_flip > 0
 
 class Line():
     """
@@ -652,6 +740,9 @@ class Line():
         self.starting_point = starting_point
         self.endpoint = endpoint
         self.recipe = recipe
+
+        # Determines whether the starting and endpoins should be flipped or not
+        self.flip = False
 
     def set_thikness(self, thikness):
         """
@@ -690,7 +781,10 @@ class Line():
             starting point of cutting.
         """
 
-        return self.starting_point
+        if not self.flip:
+            return self.starting_point
+        else:
+            return self.endpoint
 
     def get_endpoint(self):
         """
@@ -702,7 +796,11 @@ class Line():
             Numpy array of two coordinates, X2 and Y2, representing the
             endpoint of cutting.
         """
-        return self.endpoint
+
+        if not self.flip:
+            return self.endpoint
+        else:
+            return self.starting_point
 
     def get_recipe(self):
         """
@@ -727,3 +825,10 @@ class Line():
         """
 
         return self.thikness
+
+    def flip_line(self):
+        """
+        Flips the starting end endpoins.
+        """
+
+        self.flip = True
