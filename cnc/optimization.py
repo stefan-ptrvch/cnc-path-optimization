@@ -1,9 +1,13 @@
+"""
+Implements classes which handle CNC path optimization and visualization.
+"""
+
 # Reloading: remove for production
 import importlib
 
 import csv
-import numpy as np
 from collections import OrderedDict
+import numpy as np
 from tqdm import tqdm
 
 # Reloading: remove for production
@@ -21,7 +25,8 @@ class CNCOptimizer():
     algorithm optimization method.
     """
 
-    def __init__(self, file_path, pop_size, repro, crossover, mutation, num_generations, recipe_grouping=True):
+    def __init__(self, file_path, pop_size, repro, crossover, mutation,
+                 num_generations, recipe_grouping=True):
         """
         Parameters
         ----------
@@ -84,7 +89,10 @@ class CNCOptimizer():
 
         # Calculate how many reproductions and crossovers we need per
         # generation, as well as how many mutations we're gonna do
-        self.num_repro = np.round((1 - self.prob_repro)*self.pop_size).astype(int)
+        self.num_repro = np.round(
+            (1 - self.prob_repro)*self.pop_size
+        ).astype(int)
+
         self.num_cross = self.pop_size - self.num_repro
         self.num_mut = int(np.ceil(self.prob_mut*self.pop_size*self.num_genes))
 
@@ -141,7 +149,7 @@ class CNCOptimizer():
 
                 # Generate the node
                 line = Line(line_type, starting_point, endpoint, recipe,
-                        line_id)
+                            line_id)
 
                 # If it's an EDGEDEL_LINE line type, set the thikness as well
                 if line_type == 'EDGEDEL_LINE':
@@ -299,15 +307,15 @@ class CNCOptimizer():
             if group_name == 'REF':
                 continue
 
-            # We're playing roulette, so we have to generate a ball that falls on
-            # some individual
+            # We're playing roulette, so we have to generate a ball that falls
+            # on some individual
             for i in range(self.num_repro):
 
                 # Generate the ball
                 ball = np.ceil(np.random.uniform()*self.cumulative[-1]).astype(int)
 
-                # Take the winner of the roulette game, and clone him into the next
-                # generation
+                # Take the winner of the roulette game, and clone him into the
+                # next generation
                 index_of_winner = np.argmax(self.cumulative > ball).astype(int)
                 self.next_sub_pops[group_name][i, :] = group[index_of_winner, :]
 
@@ -324,11 +332,11 @@ class CNCOptimizer():
             if group_name == 'REF':
                 continue
 
-            # We're playing roulette, so we have to generate a ball that falls on
-            # some individual
+            # We're playing roulette, so we have to generate a ball that falls
+            # on some individual
             for i in range(self.num_cross//2):
 
-                # Generate the ball
+                # Generate the balls
                 ball = np.ceil(np.random.uniform()*self.cumulative[-1]).astype(int)
 
                 # Take the winner of the roulette game
@@ -412,9 +420,9 @@ class CNCOptimizer():
                 group_line_numbers.append(line.get_line_id())
 
             self.sub_pops[group_name] = self.population[
-                    :,
-                    cols_populated: cols_populated + self.group_sizes[group_name]
-                    ]
+                :,
+                cols_populated: cols_populated + self.group_sizes[group_name]
+            ]
             cols_populated += self.group_sizes[group_name]
 
             # Generate the initial state for the sub-population
@@ -501,7 +509,10 @@ class CNCOptimizer():
         current_best_flip = np.zeros(self.num_genes, dtype=bool)
 
         num_iter = self.num_genes*10000
-        for i in range(num_iter):
+        for i in tqdm(
+                range(num_iter),
+                desc="Direction Optimization"
+                ):
             # Generate a vector which determines which of the lines need to be
             # flipped
             flip = np.zeros((self.num_genes), dtype='int')
@@ -559,7 +570,7 @@ class CNCOptimizer():
         """
 
         # Add file extension if there's none
-        if not '.code' in file_name:
+        if '.code' not in file_name:
             file_name += '.code'
 
         # Open file
