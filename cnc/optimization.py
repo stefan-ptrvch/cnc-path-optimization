@@ -75,31 +75,14 @@ class CNCOptimizer():
         # Get the maximum distance
         self.max_distance = self.distance_matrix.max()
 
-        # Probability of reproduction
-        self.prob_repro = repro
-
-        # Percentage of crossover
-        self.prob_cross = crossover
-
         # Set of nodes, used for fixing children
         self.set_of_nodes = set(np.arange(self.num_genes))
 
         # Percentage of mutation
         self.prob_mut = mutation
 
-        # Calculate how many reproductions and crossovers we need per
-        # generation, as well as how many mutations we're gonna do
-        self.num_repro = np.round(
-            (1 - self.prob_repro)*self.pop_size
-        ).astype(int)
-
-        self.num_cross = self.pop_size - self.num_repro
+        # Number of mutations
         self.num_mut = int(np.ceil(self.prob_mut*self.pop_size*self.num_genes))
-
-        # We need an even number of crossovers (because we need pairs)
-        if np.mod(self.num_cross, 2) == 1:
-            self.num_cross += 1
-            self.num_repro -= 1
 
         # Number of generations
         self.num_generations = num_generations
@@ -117,8 +100,8 @@ class CNCOptimizer():
         # optimization puproses)
         self.fitness = None
 
-        ### DEBUG
-        self.ones = np.ones(self.pop_size)
+        # Array used for making some calculations easier
+        self.ONES = np.ones(self.pop_size)
 
     def generate_lines_from_file(self, file_path):
         """
@@ -299,29 +282,6 @@ class CNCOptimizer():
         # Calculate the fitness
         self.fitness = self.num_genes*self.max_distance - self.path_cost
 
-    def reproduction(self):
-        """
-        Determines which individuals get to move to the next generation (which
-        ones get cloned).
-        """
-
-        # Perform reproduction for all sub-populations
-        for group_name, group in self.sub_pops.items():
-            if group_name == 'REF':
-                continue
-
-            # We're playing roulette, so we have to generate a ball that falls
-            # on some individual
-            for i in range(self.num_repro):
-
-                # Generate the ball
-                ball = np.ceil(np.random.uniform()*self.cumulative[-1]).astype(int)
-
-                # Take the winner of the roulette game, and clone him into the
-                # next generation
-                index_of_winner = np.argmax(self.cumulative > ball).astype(int)
-                self.next_sub_pops[group_name][i, :] = group[index_of_winner, :]
-
     def crossover(self):
         """
         Generates part of the population using crossover.
@@ -359,45 +319,41 @@ class CNCOptimizer():
             # surface" the ball fell. We do array comparison, and find the 1st
             # index that is greater than the value of the ball.
             indices_of_winners = np.argmax(
-                (np.outer(self.ones, self.cumulative).T > balls).T,
+                (np.outer(self.ONES, self.cumulative).T > balls).T,
                 axis=1
             )
 
             # Now we select all the individuals who won the roulette game
             parents = group[indices_of_winners, :]
 
-            for i in range(self.num_cross//2):
+            for i in range(0, self.pop_size, 2):
                 parent1 = parents[i]
                 parent2 = parents[i + 1]
                 # We're doing Odrder 1 crossover
-                if np.random.uniform() < self.prob_cross:
-                    # Generate points, used for cutting out genetic material
-                    crp1 = np.random.randint(self.group_sizes[group_name])
-                    crp2 = np.random.randint(crp1, self.group_sizes[group_name])
 
-                    # Arrays to be populated with genetic material
-                    child1 = np.empty(self.group_sizes[group_name])
-                    child2 = np.empty(self.group_sizes[group_name])
+                # Generate points, used for cutting out genetic material
+                crp1 = np.random.randint(self.group_sizes[group_name])
+                crp2 = np.random.randint(crp1, self.group_sizes[group_name])
 
-                    # Populate children with a cut of material
-                    child1[crp1:crp2] = parent1[crp1:crp2]
-                    child2[crp1:crp2] = parent2[crp1:crp2]
+                # Arrays to be populated with genetic material
+                child1 = np.empty(self.group_sizes[group_name])
+                child2 = np.empty(self.group_sizes[group_name])
 
-                    # Fill in rest of material using Order 1 crossover
-                    other_genes_child1 = list(set(parent2) - set(parent1[crp1:crp2]))
-                    other_genes_child2 = list(set(parent1) - set(parent2[crp1:crp2]))
-                    for gen_num in range(self.group_sizes[group_name] - (crp2 - crp1)):
-                        idx = (crp2 + gen_num) % self.group_sizes[group_name]
-                        child1[idx] = other_genes_child1[gen_num]
-                        child2[idx] = other_genes_child2[gen_num]
+                # Populate children with a cut of material
+                child1[crp1:crp2] = parent1[crp1:crp2]
+                child2[crp1:crp2] = parent2[crp1:crp2]
 
-                else:
-                    child1 = parent1[:]
-                    child2 = parent2[:]
+                # Fill in rest of material using Order 1 crossover
+                other_genes_child1 = list(set(parent2) - set(parent1[crp1:crp2]))
+                other_genes_child2 = list(set(parent1) - set(parent2[crp1:crp2]))
+                for gen_num in range(self.group_sizes[group_name] - (crp2 - crp1)):
+                    idx = (crp2 + gen_num) % self.group_sizes[group_name]
+                    child1[idx] = other_genes_child1[gen_num]
+                    child2[idx] = other_genes_child2[gen_num]
 
                 # Add the children to the population
-                self.next_sub_pops[group_name][self.num_repro + 2*i, :] = child1
-                self.next_sub_pops[group_name][self.num_repro + 2*i + 1, :] = child2
+                self.next_sub_pops[group_name][i, :] = child1
+                self.next_sub_pops[group_name][i + 1, :] = child2
 
     def mutation(self):
         """
@@ -495,9 +451,6 @@ class CNCOptimizer():
                     ))
                 if group == 'REF':
                     self.next_sub_pops[group][:] = self.sub_pops[group][:]
-
-            # Perform reproduction
-            self.reproduction()
 
             # Perform crossover
             self.crossover()
