@@ -117,6 +117,9 @@ class CNCOptimizer():
         # optimization puproses)
         self.fitness = None
 
+        ### DEBUG
+        self.ones = np.ones(self.pop_size)
+
     def generate_lines_from_file(self, file_path):
         """
         Parses the input file and generates Line objects for every line.
@@ -333,21 +336,39 @@ class CNCOptimizer():
                 continue
 
             # We're playing roulette, so we have to generate a ball that falls
-            # on some individual
+            # on some individual (we take a bunch of individuals from the
+            # population)
+            # We have the cumulative sum of the fintess function of the
+            # population, so a fit individual will have a big slice of the
+            # cumulative sum. If we then generate a random number between 0 and
+            # the maximum of the cumulative sum, individuals with a bigger
+            # slice will have a higher probability to be selected.
+            # In order to find the individual on which "the ball fell", we ask
+            # what is the index of the 1st individual whose cumulative fitness
+            # value is greater than the value of the "ball". Some individuals
+            # may be selected multiple times, while other none.
+
+            # Generate the balls
+            balls = np.ceil(
+                np.random.uniform(size=self.pop_size)*self.cumulative[-1]
+            )
+
+            # Find the indices of the winners of the roulette game (sorry
+            # anyome reading this exression)
+            # The idea is to find the individual on whose "cumulative sum
+            # surface" the ball fell. We do array comparison, and find the 1st
+            # index that is greater than the value of the ball.
+            indices_of_winners = np.argmax(
+                (np.outer(self.ones, self.cumulative).T > balls).T,
+                axis=1
+            )
+
+            # Now we select all the individuals who won the roulette game
+            parents = group[indices_of_winners, :]
+
             for i in range(self.num_cross//2):
-
-                # Generate the balls
-                ball = np.ceil(np.random.uniform()*self.cumulative[-1]).astype(int)
-
-                # Take the winner of the roulette game
-                index_of_winner = np.argmax(self.cumulative > ball).astype(int)
-                parent1 = group[index_of_winner, :]
-
-                # Do the whole thing again for the second parent
-                ball = np.ceil(np.random.uniform()*self.cumulative[-1]).astype(int)
-                index_of_winner = np.argmax(self.cumulative > ball).astype(int)
-                parent2 = group[index_of_winner, :]
-
+                parent1 = parents[i]
+                parent2 = parents[i + 1]
                 # We're doing Odrder 1 crossover
                 if np.random.uniform() < self.prob_cross:
                     # Generate points, used for cutting out genetic material
