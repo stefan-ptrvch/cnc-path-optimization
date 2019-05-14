@@ -9,6 +9,7 @@ import csv
 from collections import OrderedDict
 import numpy as np
 from tqdm import tqdm
+from multiprocessing import Process, Manager
 
 # Reloading: remove for production
 import cnc.visualization as visualization
@@ -25,8 +26,8 @@ class CNCOptimizer():
     algorithm optimization method.
     """
 
-    def __init__(self, file_path, pop_size, repro, crossover, mutation,
-                 num_generations, recipe_grouping=True):
+    def __init__(self, file_path, time_factor=1, num_threads=4,
+                 recipe_grouping=True):
         """
         Parameters
         ----------
@@ -66,8 +67,17 @@ class CNCOptimizer():
         # Number of genes per individual
         self.num_genes = len(self.lines)
 
+        # These are the scaling factors for the algorithm parameters
+        self.time_factor = time_factor
+        self.pop_size_scaler = 2
+        self.num_generations_scaler = 10
+        self.bi_directional_scaler = 1000
+
+        # Number of threads for the optimization
+        self.num_threads = num_threads
+
         # Population size
-        self.pop_size = pop_size
+        self.pop_size = time_factor*self.pop_size_scaler*self.num_genes
 
         # Get the distance matrix for the nodes
         self.generate_distance_matrix()
@@ -79,13 +89,13 @@ class CNCOptimizer():
         self.set_of_nodes = set(np.arange(self.num_genes))
 
         # Percentage of mutation
-        self.prob_mut = mutation
+        self.prob_mut = 0.001
 
         # Number of mutations
         self.num_mut = int(np.ceil(self.prob_mut*self.pop_size*self.num_genes))
 
         # Number of generations
-        self.num_generations = num_generations
+        self.num_generations = time_factor*self.num_generations_scaler*self.num_genes
 
         # Best result overall
         self.best_result = {'solution': [], 'path_cost': np.inf}
@@ -269,9 +279,9 @@ class CNCOptimizer():
         all_costs[1] = self.distance_matrix[rows + self.num_genes, cols]
         all_costs[2] = self.distance_matrix[rows, cols + self.num_genes]
         all_costs[3] = self.distance_matrix[
-                rows + self.num_genes,
-                cols + self.num_genes
-                ]
+            rows + self.num_genes,
+            cols + self.num_genes
+        ]
 
         all_costs = all_costs.min(axis=0)
 
@@ -317,7 +327,10 @@ class CNCOptimizer():
             # anyome reading this exression)
             # The idea is to find the individual on whose "cumulative sum
             # surface" the ball fell. We do array comparison, and find the 1st
-            # index that is greater than the value of the ball.
+            # index that is greater than the value of the ball. We do this by
+            # generating a matrix where every row has the cumulative fitness
+            # (same vector) and we compare it with the randomly generated balls
+            # that fall on some individual.
             indices_of_winners = np.argmax(
                 (np.outer(self.ONES, self.cumulative).T > balls).T,
                 axis=1
@@ -326,18 +339,19 @@ class CNCOptimizer():
             # Now we select all the individuals who won the roulette game
             parents = group[indices_of_winners, :]
 
-            for i in range(0, self.pop_size, 2):
+            # Arrays to be populated with genetic material
+            child1 = np.empty(self.group_sizes[group_name])
+            child2 = np.empty(self.group_sizes[group_name])
+
+            for i in np.arange(0, self.pop_size, 2):
                 parent1 = parents[i]
                 parent2 = parents[i + 1]
+
                 # We're doing Odrder 1 crossover
 
                 # Generate points, used for cutting out genetic material
                 crp1 = np.random.randint(self.group_sizes[group_name])
                 crp2 = np.random.randint(crp1, self.group_sizes[group_name])
-
-                # Arrays to be populated with genetic material
-                child1 = np.empty(self.group_sizes[group_name])
-                child2 = np.empty(self.group_sizes[group_name])
 
                 # Populate children with a cut of material
                 child1[crp1:crp2] = parent1[crp1:crp2]
@@ -346,8 +360,9 @@ class CNCOptimizer():
                 # Fill in rest of material using Order 1 crossover
                 other_genes_child1 = list(set(parent2) - set(parent1[crp1:crp2]))
                 other_genes_child2 = list(set(parent1) - set(parent2[crp1:crp2]))
-                for gen_num in range(self.group_sizes[group_name] - (crp2 - crp1)):
-                    idx = (crp2 + gen_num) % self.group_sizes[group_name]
+                group_size = self.group_sizes[group_name]
+                for gen_num in range(group_size - (crp2 - crp1)):
+                    idx = (crp2 + gen_num) % group_size
                     child1[idx] = other_genes_child1[gen_num]
                     child2[idx] = other_genes_child2[gen_num]
 
@@ -411,20 +426,60 @@ class CNCOptimizer():
         Runs the optimization algorithm trying to find the shortest path.
         """
 
+        # List containing all optimization processes
+        processes = []
+
+        # Manager which will take care of shared state (all the optimization
+        # objects)
+        process_manager = Manager()
+        best_list = process_manager.list()
+        initial_list = process_manager.list()
+
+        # Start a thread for every group
+        progress_bar_position = 0
+        for i in range(self.num_threads):
+
+            # Create the processes
+            p = Process(target=self.start_opt_thread, args=(
+                best_list,
+                initial_list,
+                progress_bar_position
+                ))
+            processes.append(p)
+            p.start()
+            progress_bar_position += 1
+
+        # Wait for processes to finish before executing other code
+        for process in processes:
+            process.join()
+
+        # Take an initial population, only used for visualization
+        self.initial_result = initial_list[0]
+
+        # Now find the best solution
+        best_solution_cost = np.inf
+        for solution in best_list:
+            if solution['path_cost'] < best_solution_cost:
+                self.best_result = solution
+                best_solution_cost = solution['path_cost']
+
+    def start_opt_thread(self, best_list, initial_list, progress_bar_position):
+
+        # Set the seed for this thread, since it has the same seed as the
+        # parent thread
+        np.random.seed()
+
         self.generate_initial_population()
 
         # Number of iterations of one run
         for generation in tqdm(
-                range(self.num_generations),
-                desc="Path Optimization"
-                ):
+            range(self.num_generations),
+            desc="Path Optimization " + str(progress_bar_position),
+            position=progress_bar_position
+        ):
 
             # Evaluate the current generation
             self.evaluate_generation()
-
-            ### DEBUG
-            #  print(generation, self.path_cost.mean())
-            ### DEBUG
 
             # Get the best individual and his path cost
             if self.best_result['path_cost'] > self.path_cost.min():
@@ -462,12 +517,14 @@ class CNCOptimizer():
             for group_name, group in self.next_sub_pops.items():
                 self.sub_pops[group_name][:] = group[:]
 
+        # Append initial result to list of initial results
+        initial_list.append(self.initial_result)
+
         # Try finding the best orientation for all the lines, using the
         # hill-descent algorithm
-        print(self.best_result)
-        self.bi_directional()
+        self.bi_directional(best_list, progress_bar_position)
 
-    def bi_directional(self):
+    def bi_directional(self, best_list, progress_bar_position):
         """
         Uses hill-descent to find the best solution for bi-directional
         problem.
@@ -482,11 +539,12 @@ class CNCOptimizer():
         current_best_cost = self.distance_matrix[rows, cols].sum()
         current_best_flip = np.zeros(self.num_genes, dtype=bool)
 
-        num_iter = self.num_genes*10000
+        num_iter = self.num_genes*self.bi_directional_scaler*self.time_factor
         for i in tqdm(
-                range(num_iter),
-                desc="Direction Optimization"
-                ):
+            np.arange(num_iter),
+            desc="Direction Optimization " + str(progress_bar_position),
+            position=self.num_threads + progress_bar_position
+        ):
             # Generate a vector which determines which of the lines need to be
             # flipped
             flip = np.zeros((self.num_genes), dtype='int')
@@ -501,11 +559,11 @@ class CNCOptimizer():
                 current_best_cost = cost
                 current_best = bi_result[:]
                 current_best_flip = flip
-                print("FOUND:", current_best_cost)
 
         # Set the bi-directionally optimized result as the best
         self.best_result['path_cost'] = current_best_cost
         self.best_result['flip'] = current_best_flip > 0
+        best_list.append(self.best_result)
 
     def get_result(self):
         """
