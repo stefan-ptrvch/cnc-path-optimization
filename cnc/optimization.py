@@ -1,11 +1,8 @@
-"""
-Implements classes which handle CNC path optimization and visualization.
-"""
-
 # Reloading: remove for production
 import importlib
 
 import csv
+import copy
 from collections import OrderedDict
 import numpy as np
 from tqdm import tqdm
@@ -23,30 +20,95 @@ class CNCOptimizer():
     Solves an instance of the travelling salesman problem, for the CNC machine.
 
     Finds the shortest cutting tool travel path (SCTTP) using the genetic
-    algorithm optimization method.
+    algorithm optimization method, and the best orientation for the lines using
+    the hill-climbing algorithm.
+
+    Parameters
+    ----------
+    file_path : string
+        Path to the file containing the lines that need to be ordered.
+    time_factor : float
+        Scaling factor for the optimization, which increases the population and
+        the number of generations of the algorithm.
+    num_threads : int
+        Number of parallel runs of the optimization. The best one is returned
+        as the result.
+    recipe_grouping : bool
+        Determines whether the recipe numbers should be ignored or not.
+
+    Attributes
+    ----------
+    lines : list
+        Contains all of the lines, as Line objects, after the input file is
+        parsed.
+    recipe_grouping : bool
+        Determines whether the recipe numbers should be ignored or not.
+    groups : OrderedDict
+        Key-value pairs where the key is the group name and the value is all
+        the Line objects which belong to that group.
+    group_sizes : dict
+        Key-values pairs where the key is the group name and the value is the
+        number of Line objects in that group.
+    num_genes : int
+        Total number of lines, which determines the width of the population
+        matrix (the number of genes per individual).
+    time_factor : float
+        Scaling factor for the optimization, which increases the population and
+        the number of generations of the algorithm.
+    pop_size_scaler : int
+        Scaling factor which is internal to the optimizer. Controls how the
+        population size scales with problem difficulty.
+    num_generations_scaler : int
+        Scaling factor which is internal to the optimizer. Controls how the
+        number of generations scales with problem difficulty.
+    population : numpy array
+        Contains all of the individuals in the optimization. When it gets
+        constructed, it respects the specified group order (see `group_lines`
+        and `generate_initial_population` method method).
+    sub_pops : dict of numpy arrays
+        Contains numpy array views of the population, for all the groups.
+    next_sub_pops: dict of numpy arrays
+        Contains numpy array views of the next generation, for all the groups.
+    bi_directional_scaler : int
+        Scaling factor which is internal to the optimizer. Controls how the
+        number of iterations for hill-climbing scales with problem difficulty.
+    num_threads : int
+        Number of parallel runs of the optimization. The best one is returned
+        as the result.
+    pop_size : int
+        Number of individuals in the population, or the number of rows in the
+        population matrix. Calculated based on problem difficulty and scaling
+        factors.
+    maximum_distance : float
+        The maximum distance between any two lines, in any orientation. Used
+        when calculating the fitness of the population.
+    prob_mut : float
+        Probability of mutation for any individual in the population.
+    num_mut : int
+        Number of mutations in the population, calculated based on `prob_mut`.
+    num_generations : int
+        Number of iterations for which to run the genetic algorithm. Calculated
+        based on problem difficulty and scaling factors.
+    best_result : dict
+        Dictionary containing the solution and non-cutting path cost of the
+        best individual in the optimization.
+    initial_result : dict
+        Dictionary containing the solution and non-cutting path cost of one
+        individual at the start of the optimization. Used for comparison in the
+        visualization.
+    path_cost : numpy array
+        Vector containing the path cost of every individual in the population.
+    fitness : numpy array
+        Vector containing the fitness of every individual in the population.
+        It's calculated by subtracting the `path_cost` from the maximum path
+        cost possible.
+    ONES : numpy array
+        Matrix of ones, used for constructing a matrix of path costs, when
+        doing crossover.
     """
 
     def __init__(self, file_path, time_factor=1, num_threads=4,
                  recipe_grouping=True):
-        """
-        Parameters
-        ----------
-        nodes : list of Line
-            List of Line objects which are used to generate the distance
-            matrix.
-        pop_size : int
-            Size of the population per generation.
-        repro : float
-            Probability of reproduction.
-        crossover : float
-            Probability of crossover.
-        mutation : float
-            Probability of mutation
-        num_generations : int
-            Number of iterations to run the algorithm for.
-        progress_bar_position : int
-            Row in which the progress bar should be displayed.
-        """
 
         # List of lines, which are parsed from input file
         self.lines = []
@@ -57,17 +119,19 @@ class CNCOptimizer():
         # Parse the input file
         self.generate_lines_from_file(file_path)
 
-        # Groups of lines
+        # Groups of lines and the number of lines in each group
         self.groups = OrderedDict()
         self.group_sizes = {}
 
         # Generate the groups
         self.group_lines()
 
-        # Number of genes per individual
+        # Number of genes per individual (width of population matrix)
         self.num_genes = len(self.lines)
 
-        # These are the scaling factors for the algorithm parameters
+        # These are the scaling factors for the algorithm parameters (they
+        # determine how the algorithm scales with problem difficulty and with
+        # the time factor)
         self.time_factor = time_factor
         self.pop_size_scaler = 2
         self.num_generations_scaler = 10
@@ -79,47 +143,64 @@ class CNCOptimizer():
         # Population size
         self.pop_size = time_factor*self.pop_size_scaler*self.num_genes
 
-        # Get the distance matrix for the nodes
+        # Calculate the distance matrix (distance between every two lines in
+        # every orientation).
         self.generate_distance_matrix()
 
-        # Get the maximum distance
+        # Get the maximum distance of the distance matrix, used when
+        # calculating population fitness from population path cost
         self.max_distance = self.distance_matrix.max()
-
-        # Set of nodes, used for fixing children
-        self.set_of_nodes = set(np.arange(self.num_genes))
 
         # Percentage of mutation
         self.prob_mut = 0.001
 
-        # Number of mutations
+        # Number of mutations, derived from percentage
         self.num_mut = int(np.ceil(self.prob_mut*self.pop_size*self.num_genes))
 
         # Number of generations
         self.num_generations = time_factor*self.num_generations_scaler*self.num_genes
 
+        # Used for storing numpy array of all the individuals
+        self.population = None
+
+        # Dictionary containing numpy array views for every group in the
+        # population
+        self.sub_pops = {}
+
+        # Dictionary containing numpy array views for every group for the next
+        # generation
+        self.next_sub_pops = {}
+
         # Best result overall
         self.best_result = {'solution': [], 'path_cost': np.inf}
 
-        # Initial result
+        # Initial result, only used when plotting the results
         self.initial_result = {'solution': [], 'path_cost': np.inf}
 
         # Path cost of generation
         self.path_cost = None
 
-        # Fitness of generation, which is inverse normalized path cost (for
-        # optimization puproses)
+        # Fitness of generation (positive value based on path cost)
         self.fitness = None
 
-        # Array used for making some calculations easier
+        # Used in crossover
         self.ONES = np.ones(self.pop_size)
 
     def generate_lines_from_file(self, file_path):
         """
-        Parses the input file and generates Line objects for every line.
+        Parses the input file generates Line objects for every line, and stores
+        them in a list.
+
+        Parameters
+        ----------
+        file_path : str
+            Path to the file containing the lines that need to be optimized.
         """
 
         # Line ID is simply a counter
         line_id = 0
+
+        # We parse the file now
         with open(file_path, 'r') as path_file:
             reader = csv.reader(path_file, delimiter=' ')
             for row in reader:
@@ -143,13 +224,12 @@ class CNCOptimizer():
                     float(row[3].replace(',', '')),
                     ])
 
-                # Generate the node
                 line = Line(line_type, starting_point, endpoint, recipe,
                             line_id)
 
-                # If it's an EDGEDEL_LINE line type, set the thikness as well
+                # If it's an EDGEDEL_LINE line type, set the thickness as well
                 if line_type == 'EDGEDEL_LINE':
-                    line.set_thikness(float(row[5].replace(',', '')))
+                    line.set_thickness(float(row[5].replace(',', '')))
 
                 # Add the line to the list of lines
                 self.lines.append(line)
@@ -159,9 +239,24 @@ class CNCOptimizer():
 
     def group_lines(self):
         """
-        Groups Line objects.
+        Groups Line objects, and stores the group in an ordered dictionary.
+
+        The lines are stored in an ordered dictionary, since we need the groups
+        to be in the correct order, according to the following requirements:
+
+        We have to respect the following order:
+        1) REF
+        2) SCRIBE_LINE (non 2 recipe)
+        3) BUSBAR_LINE
+        4) EDGEDEL_LINE
+        5) SCRIBE_LINE2
+
+        We need this order when iterating over the dict, while generating the
+        initial population (see `generate_initial_population` method).
         """
 
+        # First we store the groups in an unordered dict, and later sort them
+        # accordingly
         unordered_groups = {}
         for line in self.lines:
 
@@ -223,8 +318,9 @@ class CNCOptimizer():
         """
         Generates matrix of Euclidian distances between every two nodes.
 
-        The matrix is of 2Nx2N size, where N is the number of genes, since the
-        line can be oriented either way.
+        The distances are generated for every pair of lines, in any
+        orientation, meaning that for every two lines there are four distances.
+        So the matrix is of 2Nx2N dimensions, where N is the number of lines.
         """
 
         self.distance_matrix = np.zeros((2*self.num_genes, 2*self.num_genes))
@@ -259,21 +355,28 @@ class CNCOptimizer():
 
     def evaluate_generation(self):
         """
-        Evaluates the path cost and fitness of the whole generation.
+        Evaluates the path cost and hence fitness of the whole generation,
+        using a heuristic.
 
-        Path cost is calculated as the Euclidian distance between the second
-        poin in a node and the first point in the next node. Fitness is
-        calculated as the maxmimum possible path cost, minus the actual path
+        The path cost is calculated using the Euclidean distance between every
+        two successive lines in an individual. The heuristic that is used tells
+        the evaluation to treat every so as if it can be oriented both ways
+        simultaneously, so we're actually trying to find the lowest "possible"
+        path cost (not the real path cost). We later use hill-climbing to find
+        the best orientation for every line so that we get the real lowest path
         cost.
         """
 
-        # Row and column indices of entries distance matrix, needed for path
-        # cost calculation (see distance matrix)
+        # Row and column indices of entries in the distance matrix, needed for
+        # path cost calculation (see distance matrix)
         rows = self.population[:, :-1]
         cols = self.population[:, 1:]
 
         # Use a heuristic to try and estimate the possible lowest path cost
         # when accounting for bi-directional optimization
+        # We estimate the cost for every possible orientation between every two
+        # successive lines in the individual, and then we take the minimum
+        # across all four for every line.
         all_costs = np.empty((4, self.pop_size, self.num_genes - 1))
         all_costs[0] = self.distance_matrix[rows, cols]
         all_costs[1] = self.distance_matrix[rows + self.num_genes, cols]
@@ -285,8 +388,7 @@ class CNCOptimizer():
 
         all_costs = all_costs.min(axis=0)
 
-        # Get the cost
-        #  self.path_cost = self.distance_matrix[rows, cols].sum(axis=1)
+        # Get the cost estimate
         self.path_cost = all_costs.sum(axis=1)
 
         # Calculate the fitness
@@ -294,10 +396,14 @@ class CNCOptimizer():
 
     def crossover(self):
         """
-        Generates part of the population using crossover.
+        Generates the next generation using crossover. The group order is kept
+        intact while doing this.
 
-        Takes two individuals at a time, based on fitness and combines them,
-        using the Order 1 Crossover method.
+        Takes two individuals at a time, using a roulette game based on
+        fitness, and crosses them using the Order 1 Crossover method. There are
+        some clever numpy tricks used in this method (for performance reasons),
+        which are not very verbose/intuitive, so I included a lot of commentary
+        above these lines.
         """
 
         # Perform crossover for all sub-populations
@@ -307,30 +413,32 @@ class CNCOptimizer():
 
             # We're playing roulette, so we have to generate a ball that falls
             # on some individual (we take a bunch of individuals from the
-            # population)
-            # We have the cumulative sum of the fintess function of the
+            # population).
+            # We have the cumulative sum of the fitness function of the
             # population, so a fit individual will have a big slice of the
             # cumulative sum. If we then generate a random number between 0 and
             # the maximum of the cumulative sum, individuals with a bigger
-            # slice will have a higher probability to be selected.
+            # slice will have a higher probability to be selected, meaning
+            # fitter individuals will have a higher probability to pass on
+            # their genes.
             # In order to find the individual on which "the ball fell", we ask
             # what is the index of the 1st individual whose cumulative fitness
             # value is greater than the value of the "ball". Some individuals
-            # may be selected multiple times, while other none.
+            # may be selected multiple times, while other may not be selected
+            # at all.
 
             # Generate the balls
             balls = np.ceil(
                 np.random.uniform(size=self.pop_size)*self.cumulative[-1]
             )
 
-            # Find the indices of the winners of the roulette game (sorry
-            # anyome reading this exression)
-            # The idea is to find the individual on whose "cumulative sum
-            # surface" the ball fell. We do array comparison, and find the 1st
-            # index that is greater than the value of the ball. We do this by
-            # generating a matrix where every row has the cumulative fitness
-            # (same vector) and we compare it with the randomly generated balls
-            # that fall on some individual.
+            # Find the indices of the winners of the roulette game. The idea is
+            # to find the individual on whose cumulative sum "slice" the ball
+            # fell. We do array comparison, and find the 1st index that is
+            # greater than the value of the ball. We do this by generating a
+            # matrix where every row has the cumulative fitness (same vector)
+            # and we compare it with the randomly generated balls that fall on
+            # some individual.
             indices_of_winners = np.argmax(
                 (np.outer(self.ONES, self.cumulative).T > balls).T,
                 axis=1
@@ -339,15 +447,17 @@ class CNCOptimizer():
             # Now we select all the individuals who won the roulette game
             parents = group[indices_of_winners, :]
 
-            # Arrays to be populated with genetic material
+            # Arrays to be populated with genetic material (the children)
             child1 = np.empty(self.group_sizes[group_name])
             child2 = np.empty(self.group_sizes[group_name])
 
+            # Unfortunately, I couldn't think of a way to do the crossover part
+            # without a loop, but at least it's more readable this way
             for i in np.arange(0, self.pop_size, 2):
                 parent1 = parents[i]
                 parent2 = parents[i + 1]
 
-                # We're doing Odrder 1 crossover
+                # We're doing Order 1 crossover
 
                 # Generate points, used for cutting out genetic material
                 crp1 = np.random.randint(self.group_sizes[group_name])
@@ -372,13 +482,16 @@ class CNCOptimizer():
 
     def mutation(self):
         """
-        Mutates a set number of individuals in the population, by swapping two
-        genes.
+        Performs mutation by swapping two genes around. The group order is kept
+        intact while doing this.
         """
 
+        # Go through all the groups, and perform the wanted number of mutations
         for group_name, group in self.next_sub_pops.items():
             if group_name == 'REF':
                 continue
+
+            # Perform the mutations
             for i in range(self.num_mut):
                 individual = int(np.ceil(np.random.uniform()*self.pop_size - 1))
                 gene1 = int(np.ceil(np.random.uniform()*self.group_sizes[group_name] - 1))
@@ -389,7 +502,9 @@ class CNCOptimizer():
 
     def generate_initial_population(self):
         """
-        Generates initial population.
+        Generates initial population, while also implementing correct group
+        order, and constructing views that point to slices of the population
+        that represent every group.
         """
 
         # The global population contains the sub-populations, and optimization
@@ -398,11 +513,10 @@ class CNCOptimizer():
         self.population = np.ndarray((self.pop_size, self.num_genes)).astype(int)
 
         # The sub-populations are views of the population matrix
-        self.sub_pops = {}
         cols_populated = 0
         for group_name, group in self.groups.items():
 
-            # Remember the number of lines in the gorup
+            # Remember the number of lines in the group
             self.group_sizes[group_name] = len(group)
 
             # Get all the IDs of the lines in this group, which will be used
@@ -413,7 +527,7 @@ class CNCOptimizer():
 
             self.sub_pops[group_name] = self.population[
                 :,
-                cols_populated: cols_populated + self.group_sizes[group_name]
+                cols_populated:cols_populated + self.group_sizes[group_name]
             ]
             cols_populated += self.group_sizes[group_name]
 
@@ -423,7 +537,9 @@ class CNCOptimizer():
 
     def optimize(self):
         """
-        Runs the optimization algorithm trying to find the shortest path.
+        Runs the specified number of threads, each doing a complete path and
+        direction optimization with a different random seed. Stores the best
+        result of all the optimization runs.
         """
 
         # List containing all optimization processes
@@ -440,11 +556,11 @@ class CNCOptimizer():
         for i in range(self.num_threads):
 
             # Create the processes
-            p = Process(target=self.start_opt_thread, args=(
-                best_list,
-                initial_list,
-                progress_bar_position
-                ))
+            p = Process(target=self.opt_thread, args=(best_list,
+                                                      initial_list,
+                                                      progress_bar_position
+                                                      )
+                        )
             processes.append(p)
             p.start()
             progress_bar_position += 1
@@ -463,7 +579,25 @@ class CNCOptimizer():
                 self.best_result = solution
                 best_solution_cost = solution['path_cost']
 
-    def start_opt_thread(self, best_list, initial_list, progress_bar_position):
+    def opt_thread(self, best_list, initial_list, progress_bar_position):
+        """
+        Gets launched as a child process by the main process and performs one
+        optimization, with a newly generated random seed.
+
+        Parameters
+        ----------
+        best_list : process manager list
+            List that is shared between all threads, to which the result of the
+            optimization gets appended to. Result gets appended after
+            orientation optimization.
+        initial_list : process manager list
+            List that is shared between all threads, to which an individual
+            from the start of the optimization gets appended to (used for
+            visualization purposes).
+        progress_bar_position : int
+            Determines the row in which the tqdm progress bar gets drawn. Also
+            determines part of the thread name.
+        """
 
         # Set the seed for this thread, since it has the same seed as the
         # parent thread
@@ -498,12 +632,11 @@ class CNCOptimizer():
             self.cumulative = self.fitness.cumsum()
 
             # Generate placeholders for the next generation sub-populations
-            self.next_sub_pops = {}
             for group in self.sub_pops:
                 self.next_sub_pops[group] = np.empty((
                     self.pop_size,
                     self.group_sizes[group]
-                    ))
+                ))
                 if group == 'REF':
                     self.next_sub_pops[group][:] = self.sub_pops[group][:]
 
@@ -517,21 +650,32 @@ class CNCOptimizer():
             for group_name, group in self.next_sub_pops.items():
                 self.sub_pops[group_name][:] = group[:]
 
-        # Append initial result to list of initial results
+        # Append initial result to list of initial results (only used for
+        # visualization)
         initial_list.append(self.initial_result)
 
-        # Try finding the best orientation for all the lines, using the
-        # hill-descent algorithm
+        # Find the best orientation for the lines in the result, using the
+        # hill-climbing algorithm
         self.bi_directional(best_list, progress_bar_position)
 
     def bi_directional(self, best_list, progress_bar_position):
         """
-        Uses hill-descent to find the best solution for bi-directional
-        problem.
+        Uses hill-climbing to find the best orientation for every line, so that
+        it minimizes the path cost.
+
+        Parameters
+        ----------
+        best_list : process manager list
+            List that is shared between all threads, to which the result of the
+            optimization gets appended to.
+        progress_bar_position : int
+            Determines the row in which the tqdm progress bar gets drawn. Also
+            determines part of the thread name.
         """
 
-        # Take the path cost of the non-bi-directional solution as the
-        # currenlty best solution
+        # Take the non-bi-directional solution as the current best solution,
+        # and calculate its real path cost (not possible lowest, which is the
+        # heuristic see `evaluate_generation` method)
         result = self.best_result['solution']
         current_best = result[:]
         rows = current_best[:-1]
@@ -560,26 +704,49 @@ class CNCOptimizer():
                 current_best = bi_result[:]
                 current_best_flip = flip
 
-        # Set the bi-directionally optimized result as the best
+        # Set the bi-directionally optimized result as the best result
         self.best_result['path_cost'] = current_best_cost
+
+        # Remember which lines need to be flipped
         self.best_result['flip'] = current_best_flip > 0
+
+        # Append the result to the list that is shared between threads
         best_list.append(self.best_result)
 
     def get_result(self):
         """
+        Returns the correctly flipped, optimized order of Line objects.
 
+        Returns
+        -------
+        out : list of Line
+            Correctly flipped, optimized order of Line objects
+        -------
         """
+
+        # Create copies of the lines, so as not to change the lines stored
+        # after parsing
+        copied_lines = [copy.deepcopy(line) for line in self.lines]
+
         # Flip lines that need to be flipped
         for index, value in enumerate(self.best_result['solution']):
             if self.best_result['flip'][index]:
-                self.lines[value].flip_line()
+                copied_lines[value].flip_line()
 
-        return [self.lines[index] for index in self.best_result['solution']]
+        # Order the lines correctly
+        return [copied_lines[index] for index in self.best_result['solution']]
 
     def get_initial(self):
         """
+        Returns order of Line object obtained at the beginning of optimization.
 
+        Returns
+        -------
+        out : list of Line
+            Lines ordered in a random fashion, from an individual at the
+            beginning of optimization.
         """
+
         return [self.lines[index] for index in self.initial_result['solution']]
 
     def visualize(self):
@@ -607,8 +774,10 @@ class CNCOptimizer():
 
         # Open file
         with open(file_name, 'w') as f:
+
             # Write the lines to the new file
             for line in self.get_result():
+
                 # The format is:
                 # LINE_TYPE, Y1, X1, Y2, X2, [TH], RE
                 formatted = line.get_line_type()
@@ -621,10 +790,12 @@ class CNCOptimizer():
                 formatted += ', '
                 formatted += "{:.3f}".format(line.get_endpoint()[0])
                 formatted += ', '
-                # If it's and EDGEDEL_LINE line type, add the thikness as well
+
+                # If it's and EDGEDEL_LINE line type, add the thickness as well
                 if 'EDGEDEL_LINE' == line.get_line_type():
-                    formatted += "{:.3f}".format(line.get_thikness())
+                    formatted += "{:.3f}".format(line.get_thickness())
                     formatted += ', '
+
                 formatted += line.get_recipe()
                 formatted += '\n'
 
@@ -634,24 +805,28 @@ class CNCOptimizer():
 class Line():
     """
     Line which represents where the CNC head will perform cutting.
+
+    Parameters
+    ----------
+    line_type : str
+        Name of the line type, contained in the 1st column of the .code
+        file.
+    starting_point : np.array
+        Numpy array of two coordinates, X1 and Y1, representing the
+        starting point of cutting.
+    endpoint : np.array
+        Numpy array of two coordinates, X2 and Y2, representing the
+        endpoint of cutting.
+    recipe : str
+        Recipe number, last column of .code file.
+    line_id : int
+        Unique line ID, used when constructing the initial population, so as to
+        order the lines correctly (to respect the group order).
+    flip : book
+        Determines whether the starting and endpoints need to be flipped or not.
     """
 
     def __init__(self, line_type, starting_point, endpoint, recipe, line_id):
-        """
-        Parameters
-        ----------
-        line_type : str
-            Name of the line type, contained in the 1st column of the .code
-            file.
-        starting_point : np.array
-            Numpy array of two coordinates, X1 and Y1, representing the
-            starting point of cutting.
-        endpoint : np.array
-            Numpy array of two coordinates, X2 and Y2, representing the
-            endpoint of cutting.
-        recipe : str
-            Recipe number, last column of .code file.
-        """
 
         self.line_type = line_type
         self.starting_point = starting_point
@@ -659,22 +834,22 @@ class Line():
         self.recipe = recipe
         self.line_id = line_id
 
-        # Determines whether the starting and endpoins should be flipped or not
+        # Determines whether the starting and endpoints should be flipped or not
         self.flip = False
 
-    def set_thikness(self, thikness):
+    def set_thickness(self, thickness):
         """
-        Set the line thikness, which is only specified for EDGEDEL_LINE line
+        Set the line thickness, which is only specified for EDGEDEL_LINE line
         types.
 
         Parameters
         ----------
-        thikness : str
+        thickness : str
             Number representing the thinkess of the line. Not used for
             calculations, only when writing to new .code file.
         """
 
-        self.thikness = thikness
+        self.thickness = thickness
 
     def get_line_type(self):
         """
@@ -694,9 +869,9 @@ class Line():
 
         Returns
         -------
-        starting_point : np.array
+        out : np.array
             Numpy array of two coordinates, X1 and Y1, representing the
-            starting point of cutting.
+            starting point of cutting. Returns endpoint if lines are flipped.
         """
 
         if not self.flip:
@@ -710,9 +885,10 @@ class Line():
 
         Returns
         -------
-        endpoint : np.array
+        out : np.array
             Numpy array of two coordinates, X2 and Y2, representing the
-            endpoint of cutting.
+            endpoint of cutting. Returns the starting point if lines are
+            flipped.
         """
 
         if not self.flip:
@@ -732,28 +908,34 @@ class Line():
 
         return self.recipe
 
-    def get_thikness(self):
+    def get_thickness(self):
         """
-        Returns thikness of EDGEDEL_LINE line type.
+        Returns thickness of EDGEDEL_LINE line type.
 
         Returns
         -------
-        thikness : str
-            Number representing the thikness of the line.
+        thickness : str
+            Number representing the thickness of the line.
         """
 
-        return self.thikness
+        return self.thickness
 
     def get_line_id(self):
         """
-        Returns the ID of the line
+        Returns the ID of the line.
+
+        Returns
+        -------
+        line_id : int
+            Number representing the ID of the line, which was given to it while
+            parsing the input file.
         """
 
         return self.line_id
 
     def flip_line(self):
         """
-        Flips the starting end endpoins.
+        Flips the starting end endpoints.
         """
 
         self.flip = True

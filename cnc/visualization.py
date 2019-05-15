@@ -11,19 +11,18 @@ class Visualizer():
     """
     Visualizes the result of the optimization for the CNC shortest cutting tool
     travel path, using bokeh.
+
+    Parameters
+    ----------
+    result : list of Line
+        List of Line objects, sorted in the order that represents the
+        result of the optimization.
+    initial : list of Line
+        List of line objects, obtained at the beginning of the
+        optimization, used for comaprison.
     """
 
     def __init__(self, result, initial):
-        """
-        Parameters
-        ----------
-        result : list of Line
-            List of Line objects, sorted in the order that represents the
-            result of the optimization.
-        initial : list of Line
-            List of line objects, obtained at the beginning of the
-            optimization, used for comaprison.
-        """
 
         self.result = result
         self.initial = initial
@@ -324,5 +323,5 @@ class Visualizer():
         # Save the plot
         result_plot = row([result_plot, button])
         plot = column([result_plot, initial_plot])
-        output_file("result.html", title="CNC Path Optimization")
+        output_file("visualization.html", title="CNC Path Optimization")
         save(plot)

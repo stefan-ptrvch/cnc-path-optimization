@@ -6,9 +6,9 @@ Requirements
 This package depends on the following packages, which are automatically
 installed with the provided installer:
    #. Python 3
-   #. numpy
-   #. bokeh
-   #. tqdm
+   #. numpy -- used for numerical computations (the optimization itself)
+   #. bokeh -- used for visualization
+   #. tqdm -- used for displaying a progress bar while optimizing
 
 How To Install
 ==============

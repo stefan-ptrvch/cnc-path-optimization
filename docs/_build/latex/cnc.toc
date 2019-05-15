@@ -2,9 +2,12 @@
 \contentsline {chapter}{\numberline {1}Installation}{1}{chapter.1}% 
 \contentsline {section}{\numberline {1.1}Requirements}{1}{section.1.1}% 
 \contentsline {section}{\numberline {1.2}How To Install}{1}{section.1.2}% 
-\contentsline {chapter}{\numberline {2}Usage}{2}{chapter.2}% 
-\contentsline {section}{\numberline {2.1}CNCOptimizer}{2}{section.2.1}% 
-\contentsline {section}{\numberline {2.2}Full Example}{2}{section.2.2}% 
-\contentsline {chapter}{\numberline {3}Reference}{3}{chapter.3}% 
-\contentsline {chapter}{Python Module Index}{7}{section*.29}% 
-\contentsline {chapter}{Index}{8}{section*.30}% 
+\contentsline {chapter}{\numberline {2}Implementation Details}{2}{chapter.2}% 
+\contentsline {section}{\numberline {2.1}How Group Order Is Preserved}{2}{section.2.1}% 
+\contentsline {section}{\numberline {2.2}How It\IeC {\textquoteright }s Optimized}{2}{section.2.2}% 
+\contentsline {chapter}{\numberline {3}Usage}{3}{chapter.3}% 
+\contentsline {section}{\numberline {3.1}CNCOptimizer}{3}{section.3.1}% 
+\contentsline {section}{\numberline {3.2}Full Example}{3}{section.3.2}% 
+\contentsline {chapter}{\numberline {4}Reference}{5}{chapter.4}% 
+\contentsline {chapter}{Python Module Index}{12}{section*.33}% 
+\contentsline {chapter}{Index}{13}{section*.34}% 

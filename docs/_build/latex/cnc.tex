@@ -53,7 +53,7 @@
 
 
 \title{cnc Documentation}
-\date{Apr 30, 2019}
+\date{May 15, 2019}
 \release{1.0.0}
 \author{Stefan Petrovich}
 \newcommand{\sphinxlogo}{\vbox{}}
@@ -85,13 +85,13 @@ installed with the provided installer:
 Python 3
 
 \item {} 
-numpy
+numpy \textendash{} used for numerical computations (the optimization itself)
 
 \item {} 
-bokeh
+bokeh \textendash{} used for visualization
 
 \item {} 
-tqdm
+tqdm \textendash{} used for displaying a progress bar while optimizing
 
 \end{enumerate}
 
@@ -108,6 +108,73 @@ currently active Python environment using the following command:
 \end{sphinxVerbatim}
 
 
+\chapter{Implementation Details}
+\label{\detokenize{implementation_details:implementation-details}}\label{\detokenize{implementation_details::doc}}
+The problem has two requirements. One is that a certain line group order needs
+to be respected, and the other one is that lines can be cut either way.
+
+
+\section{How Group Order Is Preserved}
+\label{\detokenize{implementation_details:how-group-order-is-preserved}}
+The line order that needs to be respected is the following one:
+\begin{enumerate}
+\def\theenumi{\arabic{enumi}}
+\def\labelenumi{\theenumi .}
+\makeatletter\def\p@enumii{\p@enumi \theenumi .}\makeatother
+\item {} 
+REF
+
+\item {} 
+SCRIBE\_LINE (non 2 recipe)
+
+\item {} 
+BUSBAR\_LINE
+
+\item {} 
+EDGEDEL\_LINE
+
+\item {} 
+SCRIBE\_LINE2
+
+\end{enumerate}
+
+In order for this grouping to be respected, the lines are grouped together
+after the .code file is parsed, and when the population matrix is being
+initialized, line groups are placed into the matrix left to right, column-wise,
+respecting the specified group order, using an ordered dictionary (standard in
+Python 3.7, but implemented as a special \sphinxstyleemphasis{OrderedDict} class in earlier
+versions).
+
+While initializing the population matrix, pointers to parts of the population
+matrix are being constructed (so called numpy array views). So, one can access
+and manipulate every group of the population individually, without affecting
+the group ordering that was specified during the initialization of the
+population matrix. Hence, in the \sphinxstyleemphasis{crossover} and \sphinxstyleemphasis{mutation} methods, only these
+groups are used to performs these actions, so there’s only inner-group mixing
+of genetic material (lines can’t get out of their respective groups).
+
+On the other hand, the path cost (and fitness) gets calculated “globally”, that
+is, using the whole population matrix, not individually for every group. This
+ensures that individuals with best inner-group line ordering are favored.
+
+
+\section{How It’s Optimized}
+\label{\detokenize{implementation_details:how-it-s-optimized}}
+There are two steps to the optimization. The first step is to find the best
+possible line order, taking into account that the lines can be oriented either
+way. This is done using the genetic algorithm with a heuristic instead of a
+precise fitness function. The heuristic tries to estimate the lowest possible
+path cost, if all the lines can be simultaneously oriented both ways, which
+means, that the heuristic gives better scores to line orders which can
+\sphinxstyleemphasis{potentially} have a very low path cost, if the right line orientation is
+found.
+
+The second step is to find the best orientation for every line, for the line
+order that was determined by the genetic algorithm using the heuristic. This is
+done using the \sphinxstyleemphasis{hill-climbing} algorithm. While performing this part of the
+optimization, the real path cost is used instead of the heuristic.
+
+
 \chapter{Usage}
 \label{\detokenize{usage:usage}}\label{\detokenize{usage::doc}}
 
@@ -116,14 +183,24 @@ currently active Python environment using the following command:
 The \sphinxstyleemphasis{CNCOptimizer} class is the only class needed in order to run the
 optimization. An instance of the class gets initialized with the path to the
 .code file that needs to be processed, and a flag that tells the optimizer
-whether to ignore recipes or not.
+whether to ignore recipes or not. Two optinal arguments are available, that can
+be used to fine tune the scale of the optimization. The arguments are
+\sphinxstyleemphasis{time\_factor}, which increases the number of iterations and the population size
+of the optimization, and \sphinxstyleemphasis{num\_threads}, which controls the number of parallel
+optimizations that are run. The optimizations all have a different random seed,
+so they all find a slightly different solution, and the best one is taken as
+the result. The altorithm also automatically scales with problem difficulty
+(the number of lines), and the ammount of scaling is also controlled with the
+\sphinxstyleemphasis{time\_factor} argument.
 
+Visualization now takes longer than optimization.
 After instantiating an \sphinxstyleemphasis{CNCOptimizer} object, the \sphinxstyleemphasis{.optimize} method needs to
 be called, after which the \sphinxstyleemphasis{.save} method is used to save the result of the
 optimization to a .code file.
 
 A visualization can be generated, if needed, using the \sphinxstyleemphasis{.visualize} method,
-which generates a \sphinxstyleemphasis{result.html} file, that can be viewed using any browser.
+which generates a \sphinxstyleemphasis{visualization.html} file, that can be viewed using any
+browser.
 
 
 \section{Full Example}
@@ -136,10 +213,17 @@ file, is given below:
 \PYG{k+kn}{from} \PYG{n+nn}{cnc.optimization} \PYG{k+kn}{import} \PYG{n}{CNCOptimizer}
 
 \PYG{c+c1}{\PYGZsh{} Path to input file}
-\PYG{n}{path\PYGZus{}file} \PYG{o}{=} \PYG{l+s+s1}{\PYGZsq{}}\PYG{l+s+s1}{./path\PYGZus{}files/lea\PYGZus{}stpl001\PYGZus{}fused.code}\PYG{l+s+s1}{\PYGZsq{}}
+\PYG{n}{path\PYGZus{}file} \PYG{o}{=} \PYG{l+s+s1}{\PYGZsq{}}\PYG{l+s+s1}{./path\PYGZus{}files/p3\PYGZus{}stpl001.code}\PYG{l+s+s1}{\PYGZsq{}}
+
+\PYG{c+c1}{\PYGZsh{} Scaling factor which determines the size of the optimization (length and}
+\PYG{c+c1}{\PYGZsh{} scale) and hence the time as well}
+\PYG{n}{timing\PYGZus{}factor} \PYG{o}{=} \PYG{l+m+mi}{1}
+
+\PYG{c+c1}{\PYGZsh{} Number of threads to run for the optimization (default is 4)}
+\PYG{n}{num\PYGZus{}threads} \PYG{o}{=} \PYG{l+m+mi}{4}
 
 \PYG{c+c1}{\PYGZsh{} Generate optimization object}
-\PYG{n}{opt} \PYG{o}{=} \PYG{n}{CNCOptimizer}\PYG{p}{(}\PYG{n}{path\PYGZus{}file}\PYG{p}{,} \PYG{n}{recipe\PYGZus{}grouping}\PYG{o}{=}\PYG{n+nb+bp}{False}\PYG{p}{)}
+\PYG{n}{opt} \PYG{o}{=} \PYG{n}{CNCOptimizer}\PYG{p}{(}\PYG{n}{path\PYGZus{}file}\PYG{p}{,} \PYG{n}{timing\PYGZus{}factor}\PYG{p}{,} \PYG{n}{num\PYGZus{}threads}\PYG{p}{,} \PYG{n}{recipe\PYGZus{}grouping}\PYG{o}{=}\PYG{n+nb+bp}{True}\PYG{p}{)}
 
 \PYG{c+c1}{\PYGZsh{} Run the optimization}
 \PYG{n}{opt}\PYG{o}{.}\PYG{n}{optimize}\PYG{p}{(}\PYG{p}{)}
@@ -156,12 +240,124 @@ file, is given below:
 \label{\detokenize{reference:module-cnc.optimization}}\label{\detokenize{reference:reference}}\label{\detokenize{reference::doc}}\index{cnc.optimization (module)@\spxentry{cnc.optimization}\spxextra{module}}\index{CNCOptimizer (class in cnc.optimization)@\spxentry{CNCOptimizer}\spxextra{class in cnc.optimization}}
 
 \begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{class }}\sphinxcode{\sphinxupquote{cnc.optimization.}}\sphinxbfcode{\sphinxupquote{CNCOptimizer}}}{\emph{file\_path}, \emph{recipe\_grouping=True}}{}
-Finds the shortest path for CNC cutting.
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{class }}\sphinxcode{\sphinxupquote{cnc.optimization.}}\sphinxbfcode{\sphinxupquote{CNCOptimizer}}}{\emph{file\_path}, \emph{time\_factor=1}, \emph{num\_threads=4}, \emph{recipe\_grouping=True}}{}
+Solves an instance of the travelling salesman problem, for the CNC machine.
 
-Parses the input file, and generates a number of GeneticAlgorithm objects,
-for different groups of lines, and performs the optimization in parallel.
-Makes visualizations of the cutting trajectory using bokeh.
+Finds the shortest cutting tool travel path (SCTTP) using the genetic
+algorithm optimization method, and the best orientation for the lines using
+the hill-climbing algorithm.
+\begin{quote}\begin{description}
+\item[{Parameters}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{file\_path}}] \leavevmode{[}string{]}
+Path to the file containing the lines that need to be ordered.
+
+\item[{\sphinxstylestrong{time\_factor}}] \leavevmode{[}float{]}
+Scaling factor for the optimization, which increases the population and
+the number of generations of the algorithm.
+
+\item[{\sphinxstylestrong{num\_threads}}] \leavevmode{[}int{]}
+Number of parallel runs of the optimization. The best one is returned
+as the result.
+
+\item[{\sphinxstylestrong{recipe\_grouping}}] \leavevmode{[}bool{]}
+Determines whether the recipe numbers should be ignored or not.
+
+\end{description}
+
+\item[{Attributes}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{lines}}] \leavevmode{[}list{]}
+Contains all of the lines, as Line objects, after the input file is
+parsed.
+
+\item[{\sphinxstylestrong{recipe\_grouping}}] \leavevmode{[}bool{]}
+Determines whether the recipe numbers should be ignored or not.
+
+\item[{\sphinxstylestrong{groups}}] \leavevmode{[}OrderedDict{]}
+Key-value pairs where the key is the group name and the value is all
+the Line objects which belong to that group.
+
+\item[{\sphinxstylestrong{group\_sizes}}] \leavevmode{[}dict{]}
+Key-values pairs where the key is the group name and the value is the
+number of Line objects in that group.
+
+\item[{\sphinxstylestrong{num\_genes}}] \leavevmode{[}int{]}
+Total number of lines, which determines the width of the population
+matrix (the number of genes per individual).
+
+\item[{\sphinxstylestrong{time\_factor}}] \leavevmode{[}float{]}
+Scaling factor for the optimization, which increases the population and
+the number of generations of the algorithm.
+
+\item[{\sphinxstylestrong{pop\_size\_scaler}}] \leavevmode{[}int{]}
+Scaling factor which is internal to the optimizer. Controls how the
+population size scales with problem difficulty.
+
+\item[{\sphinxstylestrong{num\_generations\_scaler}}] \leavevmode{[}int{]}
+Scaling factor which is internal to the optimizer. Controls how the
+number of generations scales with problem difficulty.
+
+\item[{\sphinxstylestrong{population}}] \leavevmode{[}numpy array{]}
+Contains all of the individuals in the optimization. When it gets
+constructed, it respects the specified group order (see \sphinxtitleref{group\_lines}
+and \sphinxtitleref{generate\_initial\_population} method method).
+
+\item[{\sphinxstylestrong{sub\_pops}}] \leavevmode{[}dict of numpy arrays{]}
+Contains numpy array views of the population, for all the groups.
+
+\item[{\sphinxstylestrong{next\_sub\_pops: dict of numpy arrays}}] \leavevmode
+Contains numpy array views of the next generation, for all the groups.
+
+\item[{\sphinxstylestrong{bi\_directional\_scaler}}] \leavevmode{[}int{]}
+Scaling factor which is internal to the optimizer. Controls how the
+number of iterations for hill-climbing scales with problem difficulty.
+
+\item[{\sphinxstylestrong{num\_threads}}] \leavevmode{[}int{]}
+Number of parallel runs of the optimization. The best one is returned
+as the result.
+
+\item[{\sphinxstylestrong{pop\_size}}] \leavevmode{[}int{]}
+Number of individuals in the population, or the number of rows in the
+population matrix. Calculated based on problem difficulty and scaling
+factors.
+
+\item[{\sphinxstylestrong{maximum\_distance}}] \leavevmode{[}float{]}
+The maximum distance between any two lines, in any orientation. Used
+when calculating the fitness of the population.
+
+\item[{\sphinxstylestrong{prob\_mut}}] \leavevmode{[}float{]}
+Probability of mutation for any individual in the population.
+
+\item[{\sphinxstylestrong{num\_mut}}] \leavevmode{[}int{]}
+Number of mutations in the population, calculated based on \sphinxtitleref{prob\_mut}.
+
+\item[{\sphinxstylestrong{num\_generations}}] \leavevmode{[}int{]}
+Number of iterations for which to run the genetic algorithm. Calculated
+based on problem difficulty and scaling factors.
+
+\item[{\sphinxstylestrong{best\_result}}] \leavevmode{[}dict{]}
+Dictionary containing the solution and non-cutting path cost of the
+best individual in the optimization.
+
+\item[{\sphinxstylestrong{initial\_result}}] \leavevmode{[}dict{]}
+Dictionary containing the solution and non-cutting path cost of one
+individual at the start of the optimization. Used for comparison in the
+visualization.
+
+\item[{\sphinxstylestrong{path\_cost}}] \leavevmode{[}numpy array{]}
+Vector containing the path cost of every individual in the population.
+
+\item[{\sphinxstylestrong{fitness}}] \leavevmode{[}numpy array{]}
+Vector containing the fitness of every individual in the population.
+It’s calculated by subtracting the \sphinxtitleref{path\_cost} from the maximum path
+cost possible.
+
+\item[{\sphinxstylestrong{ONES}}] \leavevmode{[}numpy array{]}
+Matrix of ones, used for constructing a matrix of path costs, when
+doing crossover.
+
+\end{description}
+
+\end{description}\end{quote}
 \subsubsection*{Methods}
 
 
@@ -182,24 +378,69 @@ Makes visualizations of the cutting trajectory using bokeh.
 
 \endlastfoot
 
-{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.generate_lines_from_file}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{generate\_lines\_from\_file}}}}}()
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.bi_directional}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{bi\_directional}}}}}(best\_list, progress\_bar\_position)
 &
-Parses the input file and generates Line objects for every line.
+Uses hill-climbing to find the best orientation for every line, so that it minimizes the path cost.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.crossover}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{crossover}}}}}()
+&
+Generates the next generation using crossover.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.evaluate_generation}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{evaluate\_generation}}}}}()
+&
+Evaluates the path cost and hence fitness of the whole generation, using a heuristic.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.generate_distance_matrix}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{generate\_distance\_matrix}}}}}()
+&
+Generates matrix of Euclidian distances between every two nodes.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.generate_initial_population}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{generate\_initial\_population}}}}}()
+&
+Generates initial population, while also implementing correct group order, and constructing views that point to slices of the population that represent every group.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.generate_lines_from_file}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{generate\_lines\_from\_file}}}}}(file\_path)
+&
+Parses the input file generates Line objects for every line, and stores them in a list.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.get_initial}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_initial}}}}}()
+&
+Returns order of Line object obtained at the beginning of optimization.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.get_result}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_result}}}}}()
+&
+Returns the correctly flipped, optimized order of Line objects.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.group_lines}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{group\_lines}}}}}()
+&
+Groups Line objects, and stores the group in an ordered dictionary.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.mutation}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{mutation}}}}}()
+&
+Performs mutation by swapping two genes around.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.opt_thread}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{opt\_thread}}}}}(best\_list, initial\_list, …)
+&
+Gets launched as a child process by the main process and performs one optimization, with a newly generated random seed.
 \\
 \hline
 {\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.optimize}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{optimize}}}}}()
 &
-Groups Line objects, and runs a thread per optimization group.
+Runs the specified number of threads, each doing a complete path and direction optimization with a different random seed.
 \\
 \hline
 {\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.save}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{save}}}}}(file\_name)
 &
 Saves the results of the optimization to a file.
-\\
-\hline
-{\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.start_process}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{start\_process}}}}}(all\_optimizations, node\_name, …)
-&
-Method that creates the optimization object, starts the optimization and saves the result.
 \\
 \hline
 {\hyperref[\detokenize{reference:cnc.optimization.CNCOptimizer.visualize}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{visualize}}}}}()
@@ -208,11 +449,188 @@ Visualizes the result of the optimization, using the Visualizer class.
 \\
 \hline
 \end{longtable}\sphinxatlongtableend\end{savenotes}
+\index{bi\_directional() (cnc.optimization.CNCOptimizer method)@\spxentry{bi\_directional()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.bi_directional}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{bi\_directional}}}{\emph{best\_list}, \emph{progress\_bar\_position}}{}
+Uses hill-climbing to find the best orientation for every line, so that
+it minimizes the path cost.
+\begin{quote}\begin{description}
+\item[{Parameters}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{best\_list}}] \leavevmode{[}process manager list{]}
+List that is shared between all threads, to which the result of the
+optimization gets appended to.
+
+\item[{\sphinxstylestrong{progress\_bar\_position}}] \leavevmode{[}int{]}
+Determines the row in which the tqdm progress bar gets drawn. Also
+determines part of the thread name.
+
+\end{description}
+
+\end{description}\end{quote}
+
+\end{fulllineitems}
+
+\index{crossover() (cnc.optimization.CNCOptimizer method)@\spxentry{crossover()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.crossover}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{crossover}}}{}{}
+Generates the next generation using crossover. The group order is kept
+intact while doing this.
+
+Takes two individuals at a time, using a roulette game based on
+fitness, and crosses them using the Order 1 Crossover method. There are
+some clever numpy tricks used in this method (for performance reasons),
+which are not very verbose/intuitive, so I included a lot of commentary
+above these lines.
+
+\end{fulllineitems}
+
+\index{evaluate\_generation() (cnc.optimization.CNCOptimizer method)@\spxentry{evaluate\_generation()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.evaluate_generation}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{evaluate\_generation}}}{}{}
+Evaluates the path cost and hence fitness of the whole generation,
+using a heuristic.
+
+The path cost is calculated using the Euclidean distance between every
+two successive lines in an individual. The heuristic that is used tells
+the evaluation to treat every so as if it can be oriented both ways
+simultaneously, so we’re actually trying to find the lowest “possible”
+path cost (not the real path cost). We later use hill-climbing to find
+the best orientation for every line so that we get the real lowest path
+cost.
+
+\end{fulllineitems}
+
+\index{generate\_distance\_matrix() (cnc.optimization.CNCOptimizer method)@\spxentry{generate\_distance\_matrix()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.generate_distance_matrix}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{generate\_distance\_matrix}}}{}{}
+Generates matrix of Euclidian distances between every two nodes.
+
+The distances are generated for every pair of lines, in any
+orientation, meaning that for every two lines there are four distances.
+So the matrix is of 2Nx2N dimensions, where N is the number of lines.
+
+\end{fulllineitems}
+
+\index{generate\_initial\_population() (cnc.optimization.CNCOptimizer method)@\spxentry{generate\_initial\_population()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.generate_initial_population}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{generate\_initial\_population}}}{}{}
+Generates initial population, while also implementing correct group
+order, and constructing views that point to slices of the population
+that represent every group.
+
+\end{fulllineitems}
+
 \index{generate\_lines\_from\_file() (cnc.optimization.CNCOptimizer method)@\spxentry{generate\_lines\_from\_file()}\spxextra{cnc.optimization.CNCOptimizer method}}
 
 \begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.generate_lines_from_file}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{generate\_lines\_from\_file}}}{}{}
-Parses the input file and generates Line objects for every line.
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.generate_lines_from_file}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{generate\_lines\_from\_file}}}{\emph{file\_path}}{}
+Parses the input file generates Line objects for every line, and stores
+them in a list.
+\begin{quote}\begin{description}
+\item[{Parameters}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{file\_path}}] \leavevmode{[}str{]}
+Path to the file containing the lines that need to be optimized.
+
+\end{description}
+
+\end{description}\end{quote}
+
+\end{fulllineitems}
+
+\index{get\_initial() (cnc.optimization.CNCOptimizer method)@\spxentry{get\_initial()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.get_initial}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{get\_initial}}}{}{}
+Returns order of Line object obtained at the beginning of optimization.
+\begin{quote}\begin{description}
+\item[{Returns}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{out}}] \leavevmode{[}list of Line{]}
+Lines ordered in a random fashion, from an individual at the
+beginning of optimization.
+
+\end{description}
+
+\end{description}\end{quote}
+
+\end{fulllineitems}
+
+\index{get\_result() (cnc.optimization.CNCOptimizer method)@\spxentry{get\_result()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.get_result}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{get\_result}}}{}{}
+Returns the correctly flipped, optimized order of Line objects.
+\begin{quote}\begin{description}
+\item[{Returns}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{out}}] \leavevmode{[}list of Line{]}
+Correctly flipped, optimized order of Line objects
+
+\item[{\sphinxstylestrong{——-}}] \leavevmode
+\end{description}
+
+\end{description}\end{quote}
+
+\end{fulllineitems}
+
+\index{group\_lines() (cnc.optimization.CNCOptimizer method)@\spxentry{group\_lines()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.group_lines}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{group\_lines}}}{}{}
+Groups Line objects, and stores the group in an ordered dictionary.
+
+The lines are stored in an ordered dictionary, since we need the groups
+to be in the correct order, according to the following requirements:
+
+We have to respect the following order:
+1) REF
+2) SCRIBE\_LINE (non 2 recipe)
+3) BUSBAR\_LINE
+4) EDGEDEL\_LINE
+5) SCRIBE\_LINE2
+
+We need this order when iterating over the dict, while generating the
+initial population (see \sphinxtitleref{generate\_initial\_population} method).
+
+\end{fulllineitems}
+
+\index{mutation() (cnc.optimization.CNCOptimizer method)@\spxentry{mutation()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.mutation}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{mutation}}}{}{}
+Performs mutation by swapping two genes around. The group order is kept
+intact while doing this.
+
+\end{fulllineitems}
+
+\index{opt\_thread() (cnc.optimization.CNCOptimizer method)@\spxentry{opt\_thread()}\spxextra{cnc.optimization.CNCOptimizer method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.opt_thread}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{opt\_thread}}}{\emph{best\_list}, \emph{initial\_list}, \emph{progress\_bar\_position}}{}
+Gets launched as a child process by the main process and performs one
+optimization, with a newly generated random seed.
+\begin{quote}\begin{description}
+\item[{Parameters}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{best\_list}}] \leavevmode{[}process manager list{]}
+List that is shared between all threads, to which the result of the
+optimization gets appended to. Result gets appended after
+orientation optimization.
+
+\item[{\sphinxstylestrong{initial\_list}}] \leavevmode{[}process manager list{]}
+List that is shared between all threads, to which an individual
+from the start of the optimization gets appended to (used for
+visualization purposes).
+
+\item[{\sphinxstylestrong{progress\_bar\_position}}] \leavevmode{[}int{]}
+Determines the row in which the tqdm progress bar gets drawn. Also
+determines part of the thread name.
+
+\end{description}
+
+\end{description}\end{quote}
 
 \end{fulllineitems}
 
@@ -220,7 +638,9 @@ Parses the input file and generates Line objects for every line.
 
 \begin{fulllineitems}
 \phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.optimize}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{optimize}}}{}{}
-Groups Line objects, and runs a thread per optimization group.
+Runs the specified number of threads, each doing a complete path and
+direction optimization with a different random seed. Stores the best
+result of all the optimization runs.
 
 \end{fulllineitems}
 
@@ -241,50 +661,6 @@ Filename of the file which will contain the optimized result.
 
 \end{fulllineitems}
 
-\index{start\_process() (cnc.optimization.CNCOptimizer method)@\spxentry{start\_process()}\spxextra{cnc.optimization.CNCOptimizer method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.CNCOptimizer.start_process}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{start\_process}}}{\emph{all\_optimizations}, \emph{node\_name}, \emph{node}, \emph{pop\_size}, \emph{repro}, \emph{crossover}, \emph{mutation}, \emph{num\_generations}, \emph{progress\_bar\_position}}{}
-Method that creates the optimization object, starts the optimization
-and saves the result.
-\begin{quote}\begin{description}
-\item[{Parameters}] \leavevmode\begin{description}
-\item[{\sphinxstylestrong{all\_optimizations}}] \leavevmode{[}dict{]}
-Dictionary which will be used to store the optimization object that
-corresponds to every line group.
-
-\item[{\sphinxstylestrong{node\_name}}] \leavevmode{[}str{]}
-The name of the group which is being optimized.
-
-\item[{\sphinxstylestrong{node}}] \leavevmode{[}list of Line{]}
-A list of Line objects, which represent the lines that belong to
-the group being optimized.
-
-\item[{\sphinxstylestrong{pop\_size}}] \leavevmode{[}int{]}
-Size of the population for every generation.
-
-\item[{\sphinxstylestrong{repro}}] \leavevmode{[}float{]}
-Probability of reproduction.
-
-\item[{\sphinxstylestrong{crossover}}] \leavevmode{[}float{]}
-Probability of crossover.
-
-\item[{\sphinxstylestrong{mutation}}] \leavevmode{[}float{]}
-Probability of mutation.
-
-\item[{\sphinxstylestrong{num\_generations}}] \leavevmode{[}int{]}
-Number of iterations for which to run the algorithm.
-
-\item[{\sphinxstylestrong{progress\_bar\_position}}] \leavevmode{[}int{]}
-Determines the row in which the progress bar will be displayed
-while optimizing.
-
-\end{description}
-
-\end{description}\end{quote}
-
-\end{fulllineitems}
-
 \index{visualize() (cnc.optimization.CNCOptimizer method)@\spxentry{visualize()}\spxextra{cnc.optimization.CNCOptimizer method}}
 
 \begin{fulllineitems}
@@ -296,131 +672,38 @@ Visualizes the result of the optimization, using the Visualizer class.
 
 \end{fulllineitems}
 
-\index{GeneticAlgorithm (class in cnc.optimization)@\spxentry{GeneticAlgorithm}\spxextra{class in cnc.optimization}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{class }}\sphinxcode{\sphinxupquote{cnc.optimization.}}\sphinxbfcode{\sphinxupquote{GeneticAlgorithm}}}{\emph{nodes}, \emph{pop\_size}, \emph{repro}, \emph{crossover}, \emph{mutation}, \emph{num\_generations}, \emph{progress\_bar\_position=0}}{}
-Solves an instance of the travelling salesman problem, for the CNC machine.
-
-Finds the shortest cutting tool travel path (SCTTP) using the genetic
-algorithm optimization method.
-\subsubsection*{Methods}
-
-
-\begin{savenotes}\sphinxatlongtablestart\begin{longtable}{\X{1}{2}\X{1}{2}}
-\hline
-
-\endfirsthead
-
-\multicolumn{2}{c}%
-{\makebox[0pt]{\sphinxtablecontinued{\tablename\ \thetable{} -- continued from previous page}}}\\
-\hline
-
-\endhead
-
-\hline
-\multicolumn{2}{r}{\makebox[0pt][r]{\sphinxtablecontinued{Continued on next page}}}\\
-\endfoot
-
-\endlastfoot
-
-{\hyperref[\detokenize{reference:cnc.optimization.GeneticAlgorithm.crossover}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{crossover}}}}}()
-&
-Generates part of the population using crossover.
-\\
-\hline
-{\hyperref[\detokenize{reference:cnc.optimization.GeneticAlgorithm.evaluate_generation}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{evaluate\_generation}}}}}()
-&
-Evaluates the path cost and fitness of the whole generation.
-\\
-\hline
-{\hyperref[\detokenize{reference:cnc.optimization.GeneticAlgorithm.generate_distance_matrix}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{generate\_distance\_matrix}}}}}()
-&
-Generates matrix of Euclidian distances between every two nodes.
-\\
-\hline
-{\hyperref[\detokenize{reference:cnc.optimization.GeneticAlgorithm.mutation}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{mutation}}}}}()
-&
-Mutates a set number of individuals in the population, by swapping two genes.
-\\
-\hline
-{\hyperref[\detokenize{reference:cnc.optimization.GeneticAlgorithm.optimize}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{optimize}}}}}()
-&
-Runs the optimization algorithm trying to find the shortest path.
-\\
-\hline
-{\hyperref[\detokenize{reference:cnc.optimization.GeneticAlgorithm.reproduction}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{reproduction}}}}}()
-&
-Determines which individuals get to move to the next generation (which ones get cloned).
-\\
-\hline
-\end{longtable}\sphinxatlongtableend\end{savenotes}
-\index{crossover() (cnc.optimization.GeneticAlgorithm method)@\spxentry{crossover()}\spxextra{cnc.optimization.GeneticAlgorithm method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm.crossover}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{crossover}}}{}{}
-Generates part of the population using crossover.
-
-Takes two individuals at a time, based on fitness and combines them,
-using the Order 1 Crossover method.
-
-\end{fulllineitems}
-
-\index{evaluate\_generation() (cnc.optimization.GeneticAlgorithm method)@\spxentry{evaluate\_generation()}\spxextra{cnc.optimization.GeneticAlgorithm method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm.evaluate_generation}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{evaluate\_generation}}}{}{}
-Evaluates the path cost and fitness of the whole generation.
-
-Path cost is calculated as the Euclidian distance between the second
-poin in a node and the first point in the next node. Fitness is
-calculated as the maxmimum possible path cost, minus the actual path
-cost.
-
-\end{fulllineitems}
-
-\index{generate\_distance\_matrix() (cnc.optimization.GeneticAlgorithm method)@\spxentry{generate\_distance\_matrix()}\spxextra{cnc.optimization.GeneticAlgorithm method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm.generate_distance_matrix}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{generate\_distance\_matrix}}}{}{}
-Generates matrix of Euclidian distances between every two nodes.
-
-\end{fulllineitems}
-
-\index{mutation() (cnc.optimization.GeneticAlgorithm method)@\spxentry{mutation()}\spxextra{cnc.optimization.GeneticAlgorithm method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm.mutation}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{mutation}}}{}{}
-Mutates a set number of individuals in the population, by swapping two
-genes.
-
-\end{fulllineitems}
-
-\index{optimize() (cnc.optimization.GeneticAlgorithm method)@\spxentry{optimize()}\spxextra{cnc.optimization.GeneticAlgorithm method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm.optimize}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{optimize}}}{}{}
-Runs the optimization algorithm trying to find the shortest path.
-
-\end{fulllineitems}
-
-\index{reproduction() (cnc.optimization.GeneticAlgorithm method)@\spxentry{reproduction()}\spxextra{cnc.optimization.GeneticAlgorithm method}}
-
-\begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.GeneticAlgorithm.reproduction}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{reproduction}}}{}{}
-Determines which individuals get to move to the next generation (which
-ones get cloned).
-
-\end{fulllineitems}
-
-
-\end{fulllineitems}
-
 \index{Line (class in cnc.optimization)@\spxentry{Line}\spxextra{class in cnc.optimization}}
 
 \begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.Line}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{class }}\sphinxcode{\sphinxupquote{cnc.optimization.}}\sphinxbfcode{\sphinxupquote{Line}}}{\emph{line\_type}, \emph{starting\_point}, \emph{endpoint}, \emph{recipe}}{}
+\phantomsection\label{\detokenize{reference:cnc.optimization.Line}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{class }}\sphinxcode{\sphinxupquote{cnc.optimization.}}\sphinxbfcode{\sphinxupquote{Line}}}{\emph{line\_type}, \emph{starting\_point}, \emph{endpoint}, \emph{recipe}, \emph{line\_id}}{}
 Line which represents where the CNC head will perform cutting.
+\begin{quote}\begin{description}
+\item[{Parameters}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{line\_type}}] \leavevmode{[}str{]}
+Name of the line type, contained in the 1st column of the .code
+file.
+
+\item[{\sphinxstylestrong{starting\_point}}] \leavevmode{[}np.array{]}
+Numpy array of two coordinates, X1 and Y1, representing the
+starting point of cutting.
+
+\item[{\sphinxstylestrong{endpoint}}] \leavevmode{[}np.array{]}
+Numpy array of two coordinates, X2 and Y2, representing the
+endpoint of cutting.
+
+\item[{\sphinxstylestrong{recipe}}] \leavevmode{[}str{]}
+Recipe number, last column of .code file.
+
+\item[{\sphinxstylestrong{line\_id}}] \leavevmode{[}int{]}
+Unique line ID, used when constructing the initial population, so as to
+order the lines correctly (to respect the group order).
+
+\item[{\sphinxstylestrong{flip}}] \leavevmode{[}book{]}
+Determines whether the starting and endpoints need to be flipped or not.
+
+\end{description}
+
+\end{description}\end{quote}
 \subsubsection*{Methods}
 
 
@@ -441,9 +724,19 @@ Line which represents where the CNC head will perform cutting.
 
 \endlastfoot
 
+{\hyperref[\detokenize{reference:cnc.optimization.Line.flip_line}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{flip\_line}}}}}()
+&
+Flips the starting end endpoints.
+\\
+\hline
 {\hyperref[\detokenize{reference:cnc.optimization.Line.get_endpoint}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_endpoint}}}}}()
 &
 Returns the endpoint of a line.
+\\
+\hline
+{\hyperref[\detokenize{reference:cnc.optimization.Line.get_line_id}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_line\_id}}}}}()
+&
+Returns the ID of the line.
 \\
 \hline
 {\hyperref[\detokenize{reference:cnc.optimization.Line.get_line_type}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_line\_type}}}}}()
@@ -461,17 +754,25 @@ Returns the recipe of a line.
 Returns the starting point of a line.
 \\
 \hline
-{\hyperref[\detokenize{reference:cnc.optimization.Line.get_thikness}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_thikness}}}}}()
+{\hyperref[\detokenize{reference:cnc.optimization.Line.get_thickness}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{get\_thickness}}}}}()
 &
-Returns thikness of EDGEDEL\_LINE line type.
+Returns thickness of EDGEDEL\_LINE line type.
 \\
 \hline
-{\hyperref[\detokenize{reference:cnc.optimization.Line.set_thikness}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{set\_thikness}}}}}(thikness)
+{\hyperref[\detokenize{reference:cnc.optimization.Line.set_thickness}]{\sphinxcrossref{\sphinxcode{\sphinxupquote{set\_thickness}}}}}(thickness)
 &
-Set the line thikness, which is only specified for EDGEDEL\_LINE line types.
+Set the line thickness, which is only specified for EDGEDEL\_LINE line types.
 \\
 \hline
 \end{longtable}\sphinxatlongtableend\end{savenotes}
+\index{flip\_line() (cnc.optimization.Line method)@\spxentry{flip\_line()}\spxextra{cnc.optimization.Line method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.Line.flip_line}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{flip\_line}}}{}{}
+Flips the starting end endpoints.
+
+\end{fulllineitems}
+
 \index{get\_endpoint() (cnc.optimization.Line method)@\spxentry{get\_endpoint()}\spxextra{cnc.optimization.Line method}}
 
 \begin{fulllineitems}
@@ -479,9 +780,27 @@ Set the line thikness, which is only specified for EDGEDEL\_LINE line types.
 Returns the endpoint of a line.
 \begin{quote}\begin{description}
 \item[{Returns}] \leavevmode\begin{description}
-\item[{\sphinxstylestrong{endpoint}}] \leavevmode{[}np.array{]}
+\item[{\sphinxstylestrong{out}}] \leavevmode{[}np.array{]}
 Numpy array of two coordinates, X2 and Y2, representing the
-endpoint of cutting.
+endpoint of cutting. Returns the starting point if lines are
+flipped.
+
+\end{description}
+
+\end{description}\end{quote}
+
+\end{fulllineitems}
+
+\index{get\_line\_id() (cnc.optimization.Line method)@\spxentry{get\_line\_id()}\spxextra{cnc.optimization.Line method}}
+
+\begin{fulllineitems}
+\phantomsection\label{\detokenize{reference:cnc.optimization.Line.get_line_id}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{get\_line\_id}}}{}{}
+Returns the ID of the line.
+\begin{quote}\begin{description}
+\item[{Returns}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{line\_id}}] \leavevmode{[}int{]}
+Number representing the ID of the line, which was given to it while
+parsing the input file.
 
 \end{description}
 
@@ -528,9 +847,9 @@ Recipe number.
 Returns the starting point of a line.
 \begin{quote}\begin{description}
 \item[{Returns}] \leavevmode\begin{description}
-\item[{\sphinxstylestrong{starting\_point}}] \leavevmode{[}np.array{]}
+\item[{\sphinxstylestrong{out}}] \leavevmode{[}np.array{]}
 Numpy array of two coordinates, X1 and Y1, representing the
-starting point of cutting.
+starting point of cutting. Returns endpoint if lines are flipped.
 
 \end{description}
 
@@ -538,15 +857,15 @@ starting point of cutting.
 
 \end{fulllineitems}
 
-\index{get\_thikness() (cnc.optimization.Line method)@\spxentry{get\_thikness()}\spxextra{cnc.optimization.Line method}}
+\index{get\_thickness() (cnc.optimization.Line method)@\spxentry{get\_thickness()}\spxextra{cnc.optimization.Line method}}
 
 \begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.Line.get_thikness}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{get\_thikness}}}{}{}
-Returns thikness of EDGEDEL\_LINE line type.
+\phantomsection\label{\detokenize{reference:cnc.optimization.Line.get_thickness}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{get\_thickness}}}{}{}
+Returns thickness of EDGEDEL\_LINE line type.
 \begin{quote}\begin{description}
 \item[{Returns}] \leavevmode\begin{description}
-\item[{\sphinxstylestrong{thikness}}] \leavevmode{[}str{]}
-Number representing the thikness of the line.
+\item[{\sphinxstylestrong{thickness}}] \leavevmode{[}str{]}
+Number representing the thickness of the line.
 
 \end{description}
 
@@ -554,15 +873,15 @@ Number representing the thikness of the line.
 
 \end{fulllineitems}
 
-\index{set\_thikness() (cnc.optimization.Line method)@\spxentry{set\_thikness()}\spxextra{cnc.optimization.Line method}}
+\index{set\_thickness() (cnc.optimization.Line method)@\spxentry{set\_thickness()}\spxextra{cnc.optimization.Line method}}
 
 \begin{fulllineitems}
-\phantomsection\label{\detokenize{reference:cnc.optimization.Line.set_thikness}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{set\_thikness}}}{\emph{thikness}}{}
-Set the line thikness, which is only specified for EDGEDEL\_LINE line
+\phantomsection\label{\detokenize{reference:cnc.optimization.Line.set_thickness}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{set\_thickness}}}{\emph{thickness}}{}
+Set the line thickness, which is only specified for EDGEDEL\_LINE line
 types.
 \begin{quote}\begin{description}
 \item[{Parameters}] \leavevmode\begin{description}
-\item[{\sphinxstylestrong{thikness}}] \leavevmode{[}str{]}
+\item[{\sphinxstylestrong{thickness}}] \leavevmode{[}str{]}
 Number representing the thinkess of the line. Not used for
 calculations, only when writing to new .code file.
 
@@ -581,6 +900,19 @@ calculations, only when writing to new .code file.
 \phantomsection\label{\detokenize{reference:cnc.visualization.Visualizer}}\pysiglinewithargsret{\sphinxbfcode{\sphinxupquote{class }}\sphinxcode{\sphinxupquote{cnc.visualization.}}\sphinxbfcode{\sphinxupquote{Visualizer}}}{\emph{result}, \emph{initial}}{}
 Visualizes the result of the optimization for the CNC shortest cutting tool
 travel path, using bokeh.
+\begin{quote}\begin{description}
+\item[{Parameters}] \leavevmode\begin{description}
+\item[{\sphinxstylestrong{result}}] \leavevmode{[}list of Line{]}
+List of Line objects, sorted in the order that represents the
+result of the optimization.
+
+\item[{\sphinxstylestrong{initial}}] \leavevmode{[}list of Line{]}
+List of line objects, obtained at the beginning of the
+optimization, used for comaprison.
+
+\end{description}
+
+\end{description}\end{quote}
 \subsubsection*{Methods}
 
 
