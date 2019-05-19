@@ -224,7 +224,7 @@ class Visualizer():
         """
 
         # Tools that will be displayed on the plots
-        tools = "pan,wheel_zoom,reset"
+        tools = "pan,wheel_zoom,reset,save"
 
         # Plot displaying the optimized path
         result_plot = figure(
