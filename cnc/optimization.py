@@ -45,7 +45,7 @@ class CNCOptimizer():
         Determines whether the recipe numbers should be ignored or not.
     groups : OrderedDict
         Key-value pairs where the key is the group name and the value is all
-        the Line objects which belong to that group.
+        the Line objects that belong to that group.
     group_sizes : dict
         Key-values pairs where the key is the group name and the value is the
         number of Line objects in that group.
