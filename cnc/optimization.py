@@ -15,7 +15,7 @@ importlib.reload(visualization)
 from cnc.visualization import Visualizer
 
 
-class CNCOptimizer():
+class CNCOptimizer:
     """
     Solves an instance of the travelling salesman problem, for the CNC machine.
 
@@ -615,7 +615,7 @@ class CNCOptimizer():
             # Evaluate the current generation
             self.evaluate_generation()
 
-            # Get the best individual and his path cost
+            # Get the best individual and their path cost
             if self.best_result['path_cost'] > self.path_cost.min():
                 self.best_result['solution'] = self.population[
                         self.path_cost.argmin()
@@ -802,7 +802,7 @@ class CNCOptimizer():
                 f.write(formatted)
 
 
-class Line():
+class Line:
     """
     Line which represents where the CNC head will perform cutting.
 
@@ -822,11 +822,11 @@ class Line():
     line_id : int
         Unique line ID, used when constructing the initial population, so as to
         order the lines correctly (to respect the group order).
-    flip : book
+    flip : bool
         Determines whether the starting and endpoints need to be flipped or not.
     """
 
-    def __init__(self, line_type, starting_point, endpoint, recipe, line_id):
+    def __init__(self, line_type, starting_point, endpoint, recipe, line_id, flip=False):
 
         self.line_type = line_type
         self.starting_point = starting_point
@@ -835,7 +835,7 @@ class Line():
         self.line_id = line_id
 
         # Determines whether the starting and endpoints should be flipped or not
-        self.flip = False
+        self.flip = flip
 
     def set_thickness(self, thickness):
         """
